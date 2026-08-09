@@ -1,0 +1,91 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+/.verification/
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+*.tmp
+*.temp
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+credentials*.json
+secrets*.json
+tokens*.json
+
+# debug
+*.log
+/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# local secrets and environment files
+.env*
+.dev.vars*
+
+# vercel
+.vercel
+
+# typescript
+next-env.d.ts
+*.tsbuildinfo
+
+# build output and caches
+/dist/
+/.cache/
+/.turbo/
+.eslintcache
+/.wrangler/
+/.mf/
+/outputs/
+/work/
+
+# local databases and private test data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/private-data/
+/local-data/
+/imports/
+/exports/
+/uploads/
+/backups/
+
+# editor settings
+/.idea/
+/.vscode/
+*.code-workspace

@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { access, readFile } from "node:fs/promises";
+import test from "node:test";
+
+async function render() {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
+  const { default: worker } = await import(workerUrl.href);
+
+  return worker.fetch(
+    new Request("http://localhost/", {
+      headers: { accept: "text/html" },
+    }),
+    {
+      ASSETS: {
+        fetch: async () => new Response("Not found", { status: 404 }),
+      },
+    },
+    {
+      waitUntil() {},
+      passThroughOnException() {},
+    },
+  );
+}
+
+test("server-renders the parent, staff, and admin shell", async () => {
+  const response = await render();
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+  const html = await response.text();
+  assert.match(html, /<title>利用予定提出・職員シフト支援システム 試作版<\/title>/i);
+  assert.match(html, /保護者向け利用予定提出/);
+  assert.match(html, /保護者画面/);
+  assert.match(html, /職員画面/);
+  assert.match(html, /管理者画面/);
+  assert.doesNotMatch(html, /前月コピー|前月予定の確認|過去の提出内容一覧|過去月を選択/);
+  assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton|codex-preview/);
+});
+
+test("keeps the existing screens while domain and storage logic stay separated", async () => {
+  const [page, css, layout, packageJson, types, schedule, placement, shift, prototype, storage] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../lib/domain/types.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/domain/schedule.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/domain/placement.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/domain/shift.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/domain/prototype.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/storage/local-storage.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /loadPrototypeStore/);
+  assert.match(page, /savePrototypeStore/);
+  assert.doesNotMatch(page, /function aggregateChildUsage|function calculateRequiredStaff|function generateShiftForMonth/);
+  assert.doesNotMatch(page, /localStorage\.getItem|localStorage\.setItem/);
+
+  assert.match(types, /type StaffProfile/);
+  assert.match(types, /type LeavePeriod/);
+  assert.match(types, /type LeaveRequest/);
+  assert.match(types, /type PlacementRule/);
+  assert.match(types, /type ShiftRecord/);
+  assert.match(types, /type SystemHistoryEntry/);
+  assert.match(types, /version:\s*3/);
+
+  assert.match(storage, /nursery-schedule-prototype-v2/);
+  assert.match(storage, /STORAGE_VERSION = 3/);
+  assert.match(storage, /normalizeStore/);
+  assert.match(storage, /loadPrototypeStore/);
+  assert.match(storage, /savePrototypeStore/);
+
+  assert.match(prototype, /permissions/);
+  assert.match(page, /hasPermission\("staff", "staff:own-leave"\)/);
+  assert.match(page, /hasPermission\("admin", "admin:leave-management"\)/);
+  assert.match(schedule, /leaveKey\(staffId: string, monthKey: string, dateKey: string\)/);
+  assert.match(page, /この日はすでに複数の職員が希望休を提出しています。/);
+  assert.match(page, /targetShift\.status === "published"/);
+  assert.match(shift, /staffAvailableForDate/);
+  assert.match(shift, /staffHasLeave/);
+  assert.match(shift, /overlaps/);
+  assert.match(shift, /wouldExceedConsecutive/);
+  assert.match(placement, /aggregateChildUsage/);
+  assert.match(placement, /calculateRequiredStaff/);
+  assert.match(shift, /generateShiftForMonth/);
+  assert.match(shift, /assignment\.fixed/);
+  assert.match(page, /勤務可能時間外のため、この勤務枠は追加できません。/);
+  assert.match(page, /希望休の日には勤務を割り当てられません。/);
+  assert.match(shift, /必要職員数が/);
+  assert.match(shift, /有資格者が/);
+
+  assert.match(page, /この内容で対象月の予定を作成する/);
+  assert.match(page, /月間予定一覧/);
+  assert.doesNotMatch(page, /copyPreviousMonth|previousPlans|previousStorageKey|previous-preview|前月コピー|前月予定の確認/);
+  assert.doesNotMatch(page, /SkeletonPreview|codex-preview/);
+
+  assert.match(css, /overflow-x:\s*hidden/);
+  assert.match(css, /mobile-fixed-actions/);
+  assert.match(css, /staff-dashboard/);
+  assert.match(css, /staff-calendar-list/);
+  assert.match(css, /admin-menu/);
+  assert.match(css, /position:\s*sticky/);
+  assert.match(css, /@media \(max-width:\s*719px\)/);
+  assert.doesNotMatch(css, /previous-preview|previous-list/);
+
+  assert.match(layout, /lang="ja"/);
+  assert.match(layout, /職員希望休/);
+  assert.match(packageJson, /"dev:host"/);
+  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+
+  await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
+});
