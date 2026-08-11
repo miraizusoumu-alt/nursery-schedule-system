@@ -15,6 +15,9 @@ const quickTunnelHost = ".trycloudflare.com";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  vars: {
+    NURSERY_GATEWAY_SECRET: process.env.NURSERY_GATEWAY_SECRET ?? "",
+  },
   d1_databases: d1
     ? [
         {

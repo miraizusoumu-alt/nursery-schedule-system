@@ -4,6 +4,7 @@ import handler from "vinext/server/app-router-entry";
 
 interface Env {
   ASSETS: Fetcher;
+  NURSERY_GATEWAY_SECRET?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -12,6 +13,13 @@ interface Env {
     };
   };
 }
+
+const GATEWAY_SECRET_HEADER = "x-nursery-gateway-secret";
+const GATEWAY_PROTECTED_PATHS = new Set([
+  "/account/password",
+  "/admin/accounts",
+  "/parent/account",
+]);
 
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -27,6 +35,16 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (GATEWAY_PROTECTED_PATHS.has(url.pathname)) {
+      const receivedSecret = request.headers.get(GATEWAY_SECRET_HEADER);
+      if (!env.NURSERY_GATEWAY_SECRET || receivedSecret !== env.NURSERY_GATEWAY_SECRET) {
+        return new Response("Not Found", {
+          status: 404,
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];

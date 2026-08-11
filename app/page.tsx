@@ -933,6 +933,7 @@ export default function Home() {
   function renderStaffScreen() {
     return (
       <section className="staff-dashboard" aria-label="職員画面">
+        <p className="prototype-disclaimer">試作機能・架空データのみ使用。職員・シフト試作は認証DBへ接続していません。</p>
         <nav className="tab-bar staff-tabs">
           {[
             ["leave", "希望休提出"],
@@ -1803,6 +1804,12 @@ export default function Home() {
           </em>
         </aside>
       </header>
+
+      <nav className="auth-entry-links" aria-label="認証機能">
+        <span>第2段階 認証確認</span>
+        <a href="/auth/parent">保護者ログイン</a>
+        <a href="/auth/admin">管理者ログイン</a>
+      </nav>
 
       <div className="mode-switch role-switch" aria-label="利用者種類切り替え">
         <button type="button" className={mode === "parent" ? "active" : ""} onClick={() => setMode("parent")}>

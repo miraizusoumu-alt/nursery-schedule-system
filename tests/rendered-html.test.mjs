@@ -33,6 +33,8 @@ test("server-renders the parent, staff, and admin shell", async () => {
   assert.match(html, /保護者向け利用予定提出/);
   assert.match(html, /保護者画面/);
   assert.match(html, /職員画面/);
+  assert.match(html, /保護者ログイン/);
+  assert.match(html, /管理者ログイン/);
   assert.match(html, /管理者画面/);
   assert.doesNotMatch(html, /前月コピー|前月予定の確認|過去の提出内容一覧|過去月を選択/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton|codex-preview/);
@@ -109,8 +111,58 @@ test("keeps the existing screens while domain and storage logic stay separated",
   assert.match(page, /featureFlags\.workforcePrototype/);
   assert.match(page, /isWorkforceAdminMenu/);
   assert.match(page, /isWorkforceHistoryTarget/);
+  assert.match(page, /試作機能・架空データのみ使用/);
   assert.match(packageJson, /"dev:host"/);
+  assert.match(packageJson, /server\/run\.mjs/);
+  assert.match(packageJson, /auth:dev-accounts/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
+});
+
+test("keeps protected pages behind the loopback-only authentication gateway", async () => {
+  const [runner, gateway, worker, viteConfig, readme] = await Promise.all([
+    readFile(new URL("../server/run.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(runner, /--hostname", "127\.0\.0\.1"/);
+  assert.match(runner, /randomBytes\(32\)/);
+  assert.match(runner, /NURSERY_GATEWAY_SECRET/);
+  assert.match(gateway, /headers\[GATEWAY_SECRET_HEADER\] = gatewaySecret/);
+  assert.match(gateway, /key\.toLowerCase\(\) === GATEWAY_SECRET_HEADER/);
+  assert.match(worker, /GATEWAY_PROTECTED_PATHS/);
+  assert.match(worker, /!env\.NURSERY_GATEWAY_SECRET \|\| receivedSecret !== env\.NURSERY_GATEWAY_SECRET/);
+  assert.match(viteConfig, /NURSERY_GATEWAY_SECRET: process\.env\.NURSERY_GATEWAY_SECRET \?\? ""/);
+  assert.match(readme, /内部ポートは確認用URLではありません/);
+});
+
+test("supports password managers, visibility controls, and the eight-character policy", async () => {
+  const [authClient, security, css, readme] = await Promise.all([
+    readFile(new URL("../components/auth/AuthClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/server/auth/security.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(security, /PASSWORD_MIN_LENGTH = 8/);
+  assert.match(authClient, /minLength=\{8\}/);
+  assert.match(authClient, /maxLength=\{128\}/);
+  assert.match(authClient, /name="currentPassword"/);
+  assert.match(authClient, /name="newPassword"/);
+  assert.match(authClient, /name="newPasswordConfirmation"/);
+  assert.match(authClient, /autoComplete="current-password"/);
+  assert.match(authClient, /autoComplete="new-password"/);
+  assert.match(authClient, /new FormData\(event\.currentTarget\)/);
+  assert.match(authClient, /requestAnimationFrame/);
+  assert.match(authClient, /aria-pressed=\{visible\}/);
+  assert.match(authClient, /コピーしました/);
+  assert.match(authClient, /navigator\.clipboard\?\.writeText/);
+  assert.match(css, /\.password-field-actions/);
+  assert.match(css, /\.password-action/);
+  assert.match(readme, /8文字以上・128文字以下/);
+  assert.doesNotMatch(authClient, /12文字以上|minLength=\{12\}|min=\{12\}/);
 });

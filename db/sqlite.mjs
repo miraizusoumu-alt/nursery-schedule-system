@@ -11,6 +11,9 @@ export const DEFAULT_MIGRATIONS_PATH = resolve(PROJECT_ROOT, "drizzle");
 
 export const REQUIRED_APPLICATION_TABLES = [
   "administrators",
+  "auth_login_attempts",
+  "auth_sessions",
+  "auth_settings",
   "basic_usage_patterns",
   "change_histories",
   "change_history_reasons",

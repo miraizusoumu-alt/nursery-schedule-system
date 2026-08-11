@@ -34,6 +34,9 @@ export const familyAccounts = sqliteTable(
     passwordHash: text("password_hash"),
     mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(true),
     temporaryPasswordIssuedAt: text("temporary_password_issued_at"),
+    passwordChangedAt: text("password_changed_at"),
+    credentialVersion: integer("credential_version").notNull().default(1),
+    lastLoginAt: text("last_login_at"),
     stoppedAt: text("stopped_at"),
     ...timestamps,
   },
@@ -92,6 +95,10 @@ export const administrators = sqliteTable(
     role: text("role").notNull().default("normal"),
     passwordHash: text("password_hash"),
     mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(true),
+    temporaryPasswordIssuedAt: text("temporary_password_issued_at"),
+    passwordChangedAt: text("password_changed_at"),
+    credentialVersion: integer("credential_version").notNull().default(1),
+    lastLoginAt: text("last_login_at"),
     status: text("status").notNull().default("active"),
     stoppedAt: text("stopped_at"),
     ...timestamps,
@@ -297,4 +304,62 @@ export const standardReasonHistories = sqliteTable(
     index("idx_standard_reason_histories_reason").on(table.standardReasonId),
     index("idx_standard_reason_histories_changed_at").on(table.changedAt),
   ],
+);
+
+export const authSessions = sqliteTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    subjectType: text("subject_type").notNull(),
+    familyAccountId: text("family_account_id").references(() => familyAccounts.id, { onDelete: "cascade" }),
+    administratorId: text("administrator_id").references(() => administrators.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    csrfTokenHash: text("csrf_token_hash").notNull(),
+    credentialVersion: integer("credential_version").notNull(),
+    issuedAt: text("issued_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+    invalidatedAt: text("invalidated_at"),
+    invalidationReason: text("invalidation_reason"),
+  },
+  (table) => [
+    uniqueIndex("uq_auth_sessions_token_hash").on(table.tokenHash),
+    index("idx_auth_sessions_family_account").on(table.familyAccountId, table.expiresAt),
+    index("idx_auth_sessions_administrator").on(table.administratorId, table.expiresAt),
+    index("idx_auth_sessions_expiry").on(table.expiresAt, table.invalidatedAt),
+    check("chk_auth_sessions_subject_type", sql`${table.subjectType} in ('family', 'administrator')`),
+    check(
+      "chk_auth_sessions_subject_reference",
+      sql`(${table.subjectType} = 'family' and ${table.familyAccountId} is not null and ${table.administratorId} is null)
+          or (${table.subjectType} = 'administrator' and ${table.familyAccountId} is null and ${table.administratorId} is not null)`,
+    ),
+  ],
+);
+
+export const authLoginAttempts = sqliteTable(
+  "auth_login_attempts",
+  {
+    id: text("id").primaryKey(),
+    loginScope: text("login_scope").notNull(),
+    loginIdHash: text("login_id_hash").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    success: integer("success", { mode: "boolean" }).notNull().default(false),
+    attemptedAt: text("attempted_at").notNull(),
+  },
+  (table) => [
+    index("idx_auth_login_attempts_login").on(table.loginScope, table.loginIdHash, table.attemptedAt),
+    index("idx_auth_login_attempts_source").on(table.loginScope, table.sourceHash, table.attemptedAt),
+    check("chk_auth_login_attempts_scope", sql`${table.loginScope} in ('family', 'administrator')`),
+  ],
+);
+
+export const authSettings = sqliteTable(
+  "auth_settings",
+  {
+    key: text("key").primaryKey(),
+    valueJson: text("value_json").notNull(),
+    updatedByAdministratorId: text("updated_by_administrator_id").references(() => administrators.id, { onDelete: "set null" }),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_auth_settings_updated_by").on(table.updatedByAdministratorId)],
 );
