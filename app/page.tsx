@@ -68,6 +68,7 @@ import type {
   WeekdayKey,
 } from "@/lib/domain/types";
 import { loadPrototypeStore, savePrototypeStore } from "@/lib/storage/local-storage";
+import { featureFlags, isWorkforceAdminMenu, isWorkforceHistoryTarget } from "@/lib/features";
 
 type ParentViewKey = "top" | "bulk" | "daily" | "confirm";
 type ModeKey = "parent" | "staff" | "admin";
@@ -155,6 +156,14 @@ export default function Home() {
   }, [store.leavePeriods, store.schedules]);
   const selectedMonthIsPast = selectedMonth < targetMonth;
   const staffPublicShift = targetShift.status === "published" ? targetShift.assignments.filter((assignment) => assignment.staffId === currentStaff.id) : [];
+  const visibleAdminMenuItems = featureFlags.workforcePrototype
+    ? adminMenuItems
+    : adminMenuItems.filter((item) => !isWorkforceAdminMenu(item.key));
+  const activeAdminMenu =
+    !featureFlags.workforcePrototype && isWorkforceAdminMenu(store.admin.menu) ? "children" : store.admin.menu;
+  const visibleHistories = featureFlags.workforcePrototype
+    ? store.histories
+    : store.histories.filter((entry) => !isWorkforceHistoryTarget(entry.target));
 
   function upsertSchedule(nextSchedule: ScheduleRecord, nextNotice?: string) {
     setStore((current) => ({
@@ -1072,25 +1081,25 @@ export default function Home() {
       <section className="admin-dashboard" aria-label="管理者画面">
         {renderAdminToolbar()}
         <nav className="admin-menu" aria-label="管理者メニュー">
-          {adminMenuItems.map((item) => (
-            <button key={item.key} type="button" className={store.admin.menu === item.key ? "active" : ""} onClick={() => updateAdmin({ menu: item.key })}>
+          {visibleAdminMenuItems.map((item) => (
+            <button key={item.key} type="button" className={activeAdminMenu === item.key ? "active" : ""} onClick={() => updateAdmin({ menu: item.key })}>
               {item.label}
             </button>
           ))}
         </nav>
-        <p className="admin-note">{selectedMonthIsPast ? "過去月は閲覧を基本とし、必要な場合だけ管理者が履歴付きで修正できます。" : "園児利用予定、職員希望休、勤務条件、シフト案を同じ対象月で確認できます。"}</p>
+        <p className="admin-note">{selectedMonthIsPast ? "過去月は閲覧を基本とし、必要な場合だけ管理者が履歴付きで修正できます。" : featureFlags.workforcePrototype ? "園児利用予定、職員希望休、勤務条件、シフト案を同じ対象月で確認できます。" : "園児利用予定と時間帯別人数を同じ対象月で確認できます。"}</p>
 
-        {store.admin.menu === "children" ? renderAdminChildren() : null}
-        {store.admin.menu === "staff" ? renderAdminStaffList() : null}
-        {store.admin.menu === "availability" ? renderAdminAvailability() : null}
-        {store.admin.menu === "leaveStatus" ? renderAdminLeaveStatus() : null}
-        {store.admin.menu === "leaveCalendar" ? renderAdminLeaveCalendar() : null}
-        {store.admin.menu === "childCounts" ? renderAdminChildCounts() : null}
-        {store.admin.menu === "placement" ? renderPlacementRules() : null}
-        {store.admin.menu === "shiftAuto" ? renderShiftAuto() : null}
-        {store.admin.menu === "shiftAdjust" ? renderShiftAdjust() : null}
-        {store.admin.menu === "shiftPublish" ? renderShiftPublish() : null}
-        {store.admin.menu === "history" ? renderHistory() : null}
+        {activeAdminMenu === "children" ? renderAdminChildren() : null}
+        {activeAdminMenu === "staff" ? renderAdminStaffList() : null}
+        {activeAdminMenu === "availability" ? renderAdminAvailability() : null}
+        {activeAdminMenu === "leaveStatus" ? renderAdminLeaveStatus() : null}
+        {activeAdminMenu === "leaveCalendar" ? renderAdminLeaveCalendar() : null}
+        {activeAdminMenu === "childCounts" ? renderAdminChildCounts() : null}
+        {activeAdminMenu === "placement" ? renderPlacementRules() : null}
+        {activeAdminMenu === "shiftAuto" ? renderShiftAuto() : null}
+        {activeAdminMenu === "shiftAdjust" ? renderShiftAdjust() : null}
+        {activeAdminMenu === "shiftPublish" ? renderShiftPublish() : null}
+        {activeAdminMenu === "history" ? renderHistory() : null}
       </section>
     );
   }
@@ -1749,8 +1758,8 @@ export default function Home() {
           <h2>変更履歴</h2>
         </div>
         <div className="history-list">
-          {store.histories.length ? (
-            store.histories.map((entry) => (
+          {visibleHistories.length ? (
+            visibleHistories.map((entry) => (
               <article className="history-item" key={entry.id}>
                 <div>
                   <strong>{entry.target}</strong>
@@ -1779,7 +1788,9 @@ export default function Home() {
               ? "保護者画面は、現在の提出対象月だけを表示します。"
               : mode === "staff"
                 ? "職員画面では、自分の希望休提出と公開済みの自分のシフトだけを確認できます。"
-                : "管理者画面では、園児数、職員条件、希望休、シフト案を月ごとに確認できます。"}
+                : featureFlags.workforcePrototype
+                  ? "管理者画面では、園児数、職員条件、希望休、シフト案を月ごとに確認できます。"
+                  : "管理者画面では、園児の利用予定と時間帯別人数を月ごとに確認できます。"}
           </p>
         </div>
         <aside className="deadline-panel" aria-label="対象月">
@@ -1797,9 +1808,11 @@ export default function Home() {
         <button type="button" className={mode === "parent" ? "active" : ""} onClick={() => setMode("parent")}>
           保護者画面
         </button>
-        <button type="button" className={mode === "staff" ? "active" : ""} onClick={() => setMode("staff")}>
-          職員画面
-        </button>
+        {featureFlags.workforcePrototype ? (
+          <button type="button" className={mode === "staff" ? "active" : ""} onClick={() => setMode("staff")}>
+            職員画面
+          </button>
+        ) : null}
         <button type="button" className={mode === "admin" ? "active" : ""} onClick={() => setMode("admin")}>
           管理者画面
         </button>

@@ -77,13 +77,19 @@ next-env.d.ts
 *.db-shm
 *.db-wal
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 *.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 /private-data/
 /local-data/
 /imports/
 /exports/
 /uploads/
 /backups/
+/local-storage-backups/
+*.localstorage-backup.json
 
 # editor settings
 /.idea/

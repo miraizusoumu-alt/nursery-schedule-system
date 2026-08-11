@@ -3,12 +3,22 @@ import type { AdminState, ChildProfile, PrototypeStore, ScheduleRecord } from ".
 
 export const STORAGE_KEY = "nursery-schedule-prototype-v2";
 export const STORAGE_VERSION = 3 as const;
+export const STORAGE_BACKUP_KEY = `${STORAGE_KEY}-original-backup-once`;
+export const STORAGE_BACKUP_META_KEY = `${STORAGE_BACKUP_KEY}-meta`;
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
 export type PrototypeStoreLoadResult = {
   store: PrototypeStore;
   recovered: boolean;
+};
+
+export type PrototypeStoreBackupResult = {
+  status: "ready" | "created" | "already-backed-up" | "no-source" | "failed";
+  verified: boolean;
+  sourceExists: boolean;
+  backupExists: boolean;
+  createdAt?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,4 +100,79 @@ export function loadPrototypeStore(storage: StorageLike, now = new Date()): Prot
 
 export function savePrototypeStore(storage: StorageLike, store: PrototypeStore) {
   storage.setItem(STORAGE_KEY, JSON.stringify(store));
+}
+
+export function inspectPrototypeStoreBackup(storage: StorageLike): PrototypeStoreBackupResult {
+  const source = storage.getItem(STORAGE_KEY);
+  const backup = storage.getItem(STORAGE_BACKUP_KEY);
+  let createdAt: string | undefined;
+  try {
+    const metadata = JSON.parse(storage.getItem(STORAGE_BACKUP_META_KEY) ?? "null") as { createdAt?: unknown } | null;
+    if (metadata && typeof metadata.createdAt === "string") createdAt = metadata.createdAt;
+  } catch {
+    createdAt = undefined;
+  }
+  return {
+    status: backup === null ? (source === null ? "no-source" : "ready") : "already-backed-up",
+    verified: backup !== null,
+    sourceExists: source !== null,
+    backupExists: backup !== null,
+    createdAt,
+  };
+}
+
+export function backupPrototypeStoreOnce(storage: StorageLike, now = new Date()): PrototypeStoreBackupResult {
+  const source = storage.getItem(STORAGE_KEY);
+  const existingBackup = storage.getItem(STORAGE_BACKUP_KEY);
+  if (existingBackup !== null) {
+    return {
+      ...inspectPrototypeStoreBackup(storage),
+      status: "already-backed-up",
+      verified: true,
+    };
+  }
+  if (source === null) {
+    return {
+      status: "no-source",
+      verified: false,
+      sourceExists: false,
+      backupExists: false,
+    };
+  }
+
+  try {
+    storage.setItem(STORAGE_BACKUP_KEY, source);
+    const verified = storage.getItem(STORAGE_BACKUP_KEY) === source;
+    if (!verified) {
+      return {
+        status: "failed",
+        verified: false,
+        sourceExists: true,
+        backupExists: storage.getItem(STORAGE_BACKUP_KEY) !== null,
+      };
+    }
+    const createdAt = now.toISOString();
+    try {
+      storage.setItem(
+        STORAGE_BACKUP_META_KEY,
+        JSON.stringify({ sourceKey: STORAGE_KEY, backupKey: STORAGE_BACKUP_KEY, createdAt, sourceLength: source.length }),
+      );
+    } catch {
+      // The original JSON is already verified. Metadata failure must not remove it.
+    }
+    return {
+      status: "created",
+      verified: true,
+      sourceExists: true,
+      backupExists: true,
+      createdAt,
+    };
+  } catch {
+    return {
+      status: "failed",
+      verified: false,
+      sourceExists: true,
+      backupExists: storage.getItem(STORAGE_BACKUP_KEY) !== null,
+    };
+  }
 }

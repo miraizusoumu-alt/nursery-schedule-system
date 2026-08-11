@@ -106,6 +106,9 @@ test("keeps the existing screens while domain and storage logic stay separated",
 
   assert.match(layout, /lang="ja"/);
   assert.match(layout, /職員希望休/);
+  assert.match(page, /featureFlags\.workforcePrototype/);
+  assert.match(page, /isWorkforceAdminMenu/);
+  assert.match(page, /isWorkforceHistoryTarget/);
   assert.match(packageJson, /"dev:host"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 

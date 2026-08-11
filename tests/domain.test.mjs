@@ -225,3 +225,30 @@ test("recovers safely from missing fields and malformed JSON without overwriting
   assert.equal(loaded.store.version, 3);
   assert.equal(memory.getItem(storage.STORAGE_KEY), malformedBefore);
 });
+
+test("backs up the original local storage JSON exactly once without changing the source", () => {
+  const memory = new MemoryStorage();
+  const originalJson = '{"version":3,"marker":"original"}';
+  memory.setItem(storage.STORAGE_KEY, originalJson);
+
+  const first = storage.backupPrototypeStoreOnce(memory, fixedNow);
+  assert.equal(first.status, "created");
+  assert.equal(first.verified, true);
+  assert.equal(memory.getItem(storage.STORAGE_KEY), originalJson);
+  assert.equal(memory.getItem(storage.STORAGE_BACKUP_KEY), originalJson);
+
+  memory.setItem(storage.STORAGE_KEY, '{"version":3,"marker":"newer"}');
+  const second = storage.backupPrototypeStoreOnce(memory, new Date(fixedNow.getTime() + 1000));
+  assert.equal(second.status, "already-backed-up");
+  assert.equal(second.verified, true);
+  assert.equal(memory.getItem(storage.STORAGE_BACKUP_KEY), originalJson);
+});
+
+test("reports safely when no local storage source exists", () => {
+  const memory = new MemoryStorage();
+  const result = storage.backupPrototypeStoreOnce(memory, fixedNow);
+  assert.equal(result.status, "no-source");
+  assert.equal(result.verified, false);
+  assert.equal(memory.getItem(storage.STORAGE_KEY), null);
+  assert.equal(memory.getItem(storage.STORAGE_BACKUP_KEY), null);
+});
