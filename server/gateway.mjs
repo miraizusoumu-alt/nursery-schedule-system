@@ -2,7 +2,9 @@ import http from "node:http";
 import net from "node:net";
 import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
 import { createAuthService } from "../lib/server/auth/service.mjs";
+import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
 import { authorizeProtectedPage, handleAuthApiRequest } from "./auth-http.mjs";
+import { handleFamilyScheduleApiRequest } from "./family-schedule-http.mjs";
 
 const MAX_AUTH_BODY_BYTES = 1024 * 1024;
 const GATEWAY_SECRET_HEADER = "x-nursery-gateway-secret";
@@ -110,12 +112,15 @@ export async function createGateway({
   const database = openDatabase(databasePath);
   await applyMigrations(database);
   const service = createAuthService({ database });
+  const familyScheduleService = createFamilyScheduleService({ database });
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {
       const isApi = incoming.url?.startsWith("/api/") === true;
       if (isApi) {
         const request = await toFetchRequest(incoming, publicPort, true);
+        const familyScheduleResponse = await handleFamilyScheduleApiRequest(request, { service: familyScheduleService, authService: service });
+        if (familyScheduleResponse) return await sendFetchResponse(familyScheduleResponse, outgoing);
         const response = await handleAuthApiRequest(request, { service, runtimeSecureCookies });
         if (response) return await sendFetchResponse(response, outgoing);
       } else if (incoming.method === "GET" || incoming.method === "HEAD") {

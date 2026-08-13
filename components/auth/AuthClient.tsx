@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { api } from "@/lib/client/api";
 
 type Actor = {
   type: "family" | "administrator";
@@ -51,27 +52,6 @@ type AuthSettings = {
   passwordMinimumLength: number;
   secureCookies: boolean;
 };
-
-function csrfToken() {
-  const entry = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("nursery_csrf="));
-  return entry ? decodeURIComponent(entry.slice("nursery_csrf=".length)) : "";
-}
-
-async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
-  const method = options.method ?? "GET";
-  const headers = new Headers({ accept: "application/json" });
-  if (options.body !== undefined) headers.set("content-type", "application/json");
-  if (method !== "GET" && method !== "HEAD" && !path.includes("/login/")) headers.set("x-csrf-token", csrfToken());
-  const response = await fetch(path, {
-    method,
-    headers,
-    credentials: "same-origin",
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  const result = await response.json() as T & { message?: string };
-  if (!response.ok) throw new Error(result.message ?? "処理を完了できませんでした。");
-  return result;
-}
 
 async function copyPasswordToClipboard(value: string) {
   if (navigator.clipboard?.writeText) {
@@ -317,7 +297,7 @@ export function ParentAccountView() {
         <div className="auth-section-heading"><div><span>この家庭に紐づく園児のみ</span><h2>園児一覧</h2></div></div>
         {data.children.length ? <ul className="auth-list">{data.children.map((child) => <li key={child.id}><strong>{child.name}</strong><span>{child.class_name || child.child_code}</span></li>)}</ul> : <p>現在紐づいている園児はいません。</p>}
       </section>
-      <p className="auth-message info">月間予定のDB連携は第3・第4段階で行います。現在の利用予定試作画面は従来どおりlocalStorageを使用します。</p>
+      <p className="auth-message info"><a className="text-link" href="/parent/schedule">利用予定の入力・提出へ進む</a></p>
     </div>
   );
 }

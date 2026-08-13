@@ -121,10 +121,11 @@ test("keeps the existing screens while domain and storage logic stay separated",
 });
 
 test("keeps protected pages behind the loopback-only authentication gateway", async () => {
-  const [runner, gateway, worker, viteConfig, readme] = await Promise.all([
+  const [runner, gateway, worker, authHttp, viteConfig, readme] = await Promise.all([
     readFile(new URL("../server/run.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../server/auth-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
   ]);
@@ -135,9 +136,38 @@ test("keeps protected pages behind the loopback-only authentication gateway", as
   assert.match(gateway, /headers\[GATEWAY_SECRET_HEADER\] = gatewaySecret/);
   assert.match(gateway, /key\.toLowerCase\(\) === GATEWAY_SECRET_HEADER/);
   assert.match(worker, /GATEWAY_PROTECTED_PATHS/);
+  assert.match(worker, /\/parent\/schedule/);
+  assert.match(authHttp, /isParentSchedulePage/);
+  assert.match(authHttp, /\/parent\/schedule/);
   assert.match(worker, /!env\.NURSERY_GATEWAY_SECRET \|\| receivedSecret !== env\.NURSERY_GATEWAY_SECRET/);
   assert.match(viteConfig, /NURSERY_GATEWAY_SECRET: process\.env\.NURSERY_GATEWAY_SECRET \?\? ""/);
   assert.match(readme, /内部ポートは確認用URLではありません/);
+});
+
+test("adds the protected database-backed parent schedule screen without changing the prototype top page", async () => {
+  const [page, parentPage, parentClient, familyService, scheduleHttp, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/parent/schedule/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/parent/ParentScheduleClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/server/family-schedule/service.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/family-schedule-http.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /loadPrototypeStore/);
+  assert.match(parentPage, /ParentScheduleClient/);
+  assert.match(parentClient, /この子の予定を兄弟姉妹にも反映/);
+  assert.match(parentClient, /保存中|保存済み|保存失敗/);
+  assert.match(parentClient, /修正後は再提出が必要です/);
+  assert.match(parentClient, /入力内容は画面に残しています/);
+  assert.match(parentClient, /parent-fixed-actions|child-switcher/);
+  assert.match(familyService, /CHILD_SCOPE_VIOLATION/);
+  assert.match(familyService, /BEGIN IMMEDIATE/);
+  assert.match(familyService, /Asia\/Tokyo|TOKYO_OFFSET_MINUTES/);
+  assert.match(scheduleHttp, /assertCsrf/);
+  assert.match(css, /parent-fixed-actions/);
+  assert.match(css, /overflow-x:\s*hidden/);
+  assert.match(css, /@media \(max-width:\s*719px\)/);
 });
 
 test("supports password managers, visibility controls, and the eight-character policy", async () => {

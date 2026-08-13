@@ -29,7 +29,7 @@ function cookie(name, value, options = {}) {
   return parts.join("; ");
 }
 
-function json(body, status = 200, headers = new Headers()) {
+export function json(body, status = 200, headers = new Headers()) {
   headers.set("content-type", "application/json; charset=utf-8");
   headers.set("cache-control", "no-store");
   headers.set("x-content-type-options", "nosniff");
@@ -67,7 +67,7 @@ function assertSameOrigin(request) {
   }
 }
 
-async function readJson(request) {
+export async function readJson(request) {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     throw new AuthError("JSON_REQUIRED", "JSON形式で送信してください。", 415);
   }
@@ -89,7 +89,7 @@ function currentSession(request, service) {
   return service.sessionByToken(cookies[SESSION_COOKIE]);
 }
 
-function requireSession(request, service, { type = null, allowPasswordChangeRequired = false } = {}) {
+export function requireSession(request, service, { type = null, allowPasswordChangeRequired = false } = {}) {
   const session = currentSession(request, service);
   if (!session) throw new AuthError("UNAUTHENTICATED", "ログインが必要です。", 401);
   if (type && session.actor.type !== type) throw new AuthError("FORBIDDEN", "この画面を利用する権限がありません。", 403);
@@ -99,7 +99,7 @@ function requireSession(request, service, { type = null, allowPasswordChangeRequ
   return session;
 }
 
-function assertCsrf(request, session) {
+export function assertCsrf(request, session) {
   assertSameOrigin(request);
   const cookies = parseCookies(request.headers.get("cookie"));
   const cookieToken = cookies[CSRF_COOKIE];
@@ -130,7 +130,7 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
         actor: service.publicActor(result.actor),
         redirectTo: result.actor.mustChangePassword
           ? "/account/password"
-          : result.actor.type === "family" ? "/parent/account" : "/admin/accounts",
+          : result.actor.type === "family" ? "/parent/schedule" : "/admin/accounts",
       }, 200, headers);
     }
 
@@ -155,7 +155,7 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
       return json({
         ok: true,
         actor: service.publicActor(result.actor),
-        redirectTo: result.actor.type === "family" ? "/parent/account" : "/admin/accounts",
+        redirectTo: result.actor.type === "family" ? "/parent/schedule" : "/admin/accounts",
       }, 200, headers);
     }
 
@@ -267,10 +267,11 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
 export function authorizeProtectedPage(request, service) {
   const url = new URL(request.url);
   const isParentPage = url.pathname === "/parent/account";
+  const isParentSchedulePage = url.pathname === "/parent/schedule";
   const isAdministratorPage = url.pathname === "/admin/accounts";
   const isPasswordPage = url.pathname === "/account/password";
   const isPrototypeTop = url.pathname === "/";
-  if (!isParentPage && !isAdministratorPage && !isPasswordPage && !isPrototypeTop) return null;
+  if (!isParentPage && !isParentSchedulePage && !isAdministratorPage && !isPasswordPage && !isPrototypeTop) return null;
 
   const session = currentSession(request, service);
   if (isPrototypeTop && !session) return null;
@@ -281,7 +282,7 @@ export function authorizeProtectedPage(request, service) {
   if (session.actor.mustChangePassword && !isPasswordPage) {
     return Response.redirect(new URL("/account/password", request.url), 303);
   }
-  if (isParentPage && session.actor.type !== "family") {
+  if ((isParentPage || isParentSchedulePage) && session.actor.type !== "family") {
     return new Response("この画面を利用する権限がありません。", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   if (isAdministratorPage && session.actor.type !== "administrator") {
