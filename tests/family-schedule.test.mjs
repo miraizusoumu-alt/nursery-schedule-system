@@ -30,9 +30,11 @@ async function insertFixture(database, currentTime) {
   const passwords = {
     familyA: generateTemporaryPassword(),
     familyB: generateTemporaryPassword(),
+    administrator: generateTemporaryPassword(),
   };
   const familyAHash = await hashPassword(passwords.familyA);
   const familyBHash = await hashPassword(passwords.familyB);
+  const administratorHash = await hashPassword(passwords.administrator);
 
   for (const [id, code, name, loginId, hash] of [
     ["family-a", "DEMO-FAMILY-A", "架空家庭A", "demo-family-a", familyAHash],
@@ -49,6 +51,13 @@ async function insertFixture(database, currentTime) {
        VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?)`,
     ).run(`${id}-account`, id, loginId, hash, timestamp, timestamp, timestamp);
   }
+
+  database.prepare(
+    `INSERT INTO administrators
+     (id, login_id, display_name, role, password_hash, must_change_password,
+      credential_version, status, created_at, updated_at)
+     VALUES ('normal-admin', 'demo-schedule-admin', '架空予定管理者', 'normal', ?, 0, 1, 'active', ?, ?)`,
+  ).run(administratorHash, timestamp, timestamp);
 
   for (const [id, code, name, className, familyId, sortOrder] of [
     ["child-a1", "DEMO-CHILD-A1", "架空園児A1", "架空組A", "family-a", 1],
@@ -86,6 +95,7 @@ async function insertFixture(database, currentTime) {
     passwords,
     actorA: { type: "family", id: "family-a-account", familyId: "family-a", displayName: "架空家庭A", mustChangePassword: false },
     actorB: { type: "family", id: "family-b-account", familyId: "family-b", displayName: "架空家庭B", mustChangePassword: false },
+    actorAdmin: { type: "administrator", id: "normal-admin", role: "normal", displayName: "架空予定管理者", mustChangePassword: false },
   };
 }
 
@@ -379,6 +389,160 @@ test("uses Japan-time deadlines and blocks edits when the period is closed", asy
       () => service.submitFamilySchedules(fixture.actorA),
       (error) => error.code === "SUBMISSION_LOCKED",
     );
+  });
+});
+
+test("uses one access decision for global deadlines, family extensions, boundaries, and closed periods", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
+    let dashboardA = service.dashboard(fixture.actorA);
+    const dashboardB = service.dashboard(fixture.actorB);
+
+    clock.value = new Date("2026-08-25T14:59:59.000Z");
+    dashboardA = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboardA, "child-a1", "2026-09-01", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+    });
+    assert.equal(dashboardA.period.editable, true);
+    dashboardA = service.submitFamilySchedules(fixture.actorA);
+    assert.equal(dashboardA.submission.status, "submitted");
+
+    clock.value = new Date("2026-08-25T14:59:59.001Z");
+    assert.equal(service.dashboard(fixture.actorA).period.editable, false);
+    assert.throws(() => service.submitFamilySchedules(fixture.actorA), (error) => error.code === "SUBMISSION_LOCKED");
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", {
+        days: daysWithPatch(dashboardA, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+      }),
+      (error) => error.code === "SUBMISSION_LOCKED",
+    );
+    assert.throws(
+      () => service.setFamilyDeadlineExtension(fixture.actorA, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        extendedDeadlineAt: "2026-08-27T14:59:59.000Z",
+        reason: "権限拒否確認",
+      }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    assert.throws(
+      () => service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        extendedDeadlineAt: "2026-08-25T14:59:58.000Z",
+        reason: "不正期限確認",
+      }),
+      (error) => error.code === "INVALID_DEADLINE_EXTENSION",
+    );
+
+    database.prepare(
+      `INSERT INTO submission_periods
+       (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'draft', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+    service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-10",
+      extendedDeadlineAt: "2026-09-27T14:59:59.000Z",
+      reason: "別期間への延長",
+    });
+    assert.equal(service.dashboard(fixture.actorA).period.editable, false);
+
+    const created = service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      extendedDeadlineAt: "2026-08-27T14:59:59.000Z",
+      reason: "家庭事情による延長",
+    });
+    const updated = service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      extendedDeadlineAt: "2026-08-28T14:59:59.000Z",
+      reason: "確認日変更による再延長",
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.extendedDeadlineAt, "2026-08-28T14:59:59.000Z");
+    assert.equal(updated.administratorId, fixture.actorAdmin.id);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM family_deadline_extensions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'",
+    ).get().count, 1);
+    assert.equal(service.dashboard(fixture.actorA).period.editable, true);
+    service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+      familyId: "family-b",
+      submissionPeriodId: "period-2026-09",
+      extendedDeadlineAt: "2026-08-28T14:59:59.000Z",
+      reason: "別家庭への延長",
+    });
+    database.prepare("UPDATE families SET status = 'stopped' WHERE id = 'family-b'").run();
+    assert.equal(service.dashboard(fixture.actorB).period.editable, false);
+    assert.deepEqual(dashboardB.children.map((child) => child.id), ["child-b1"]);
+
+    clock.value = new Date("2026-08-28T14:59:59.000Z");
+    dashboardA = service.dashboard(fixture.actorA);
+    dashboardA = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboardA, "child-a1", "2026-09-01", { usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" }),
+    });
+    assert.equal(dashboardA.period.editable, true);
+    dashboardA = service.submitFamilySchedules(fixture.actorA);
+    assert.equal(dashboardA.submission.status, "submitted");
+    assert.equal(service.latestSubmittedVersion(fixture.actorA).sequenceNumber, 2);
+
+    clock.value = new Date("2026-08-28T14:59:59.001Z");
+    assert.equal(service.dashboard(fixture.actorA).period.editable, false);
+    assert.throws(() => service.submitFamilySchedules(fixture.actorA), (error) => error.code === "SUBMISSION_LOCKED");
+
+    clock.value = new Date("2026-08-27T00:00:00.000Z");
+    database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-09'").run();
+    assert.equal(service.dashboard(fixture.actorA).period.editable, false);
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", { days: dashboardA.children[0].schedule.days }),
+      (error) => error.code === "SUBMISSION_LOCKED",
+    );
+
+    const extensionOperations = database.prepare(
+      `SELECT actor_type, actor_id, operation
+       FROM operation_logs
+       WHERE target_type = 'family_deadline_extension'
+       ORDER BY occurred_at, rowid`,
+    ).all().map((row) => ({ ...row }));
+    assert.deepEqual(extensionOperations, [
+      { actor_type: "administrator", actor_id: "normal-admin", operation: "family_deadline_extension.created" },
+      { actor_type: "administrator", actor_id: "normal-admin", operation: "family_deadline_extension.created" },
+      { actor_type: "administrator", actor_id: "normal-admin", operation: "family_deadline_extension.updated" },
+      { actor_type: "administrator", actor_id: "normal-admin", operation: "family_deadline_extension.created" },
+    ]);
+  });
+});
+
+test("creates a new immutable submission version when resubmitting during a family extension", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
+    let dashboard = service.dashboard(fixture.actorA);
+    dashboard = service.submitFamilySchedules(fixture.actorA);
+    const firstVersion = service.latestSubmittedVersion(fixture.actorA);
+    const firstSnapshot = rawSubmissionVersion(database, firstVersion.id);
+
+    clock.value = new Date("2026-08-26T00:00:00.000Z");
+    service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      extendedDeadlineAt: "2026-08-27T14:59:59.000Z",
+      reason: "再提出のための延長",
+    });
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+    });
+    assert.equal(dashboard.submission.revisionRequired, true);
+
+    service.submitFamilySchedules(fixture.actorA);
+    const secondVersion = service.latestSubmittedVersion(fixture.actorA);
+    assert.equal(secondVersion.sequenceNumber, 2);
+    assert.equal(secondVersion.sourceVersionId, firstVersion.id);
+    assert.notEqual(secondVersion.id, firstVersion.id);
+    assert.equal(
+      secondVersion.children.find((child) => child.childId === "child-a1")
+        .days.find((day) => day.date === "2026-09-02").usageStatus,
+      "off",
+    );
+    assert.deepEqual(service.latestSubmittedVersion(fixture.actorA).id, secondVersion.id);
+    assert.deepEqual(rawSubmissionVersion(database, firstVersion.id), firstSnapshot);
   });
 });
 
