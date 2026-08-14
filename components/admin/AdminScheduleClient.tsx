@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LogoutButton } from "@/components/auth/AuthClient";
+import { AdminChildManagement } from "@/components/admin/AdminChildManagement";
 import { ApiError, api } from "@/lib/client/api";
 
 type VersionDay = {
@@ -262,6 +263,8 @@ export function AdminScheduleClient() {
       </section>
       {message ? <p className="auth-message info" role="status">{message}</p> : null}
       {error ? <p className="auth-message error" role="alert">{error}</p> : null}
+
+      <AdminChildManagement />
 
       <section className="auth-section">
         <div className="auth-section-heading"><div><span>保護者画面に表示する月</span><h2>対象月</h2></div></div>

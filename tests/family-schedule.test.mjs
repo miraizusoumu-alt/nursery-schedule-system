@@ -1580,6 +1580,249 @@ test("connects administrator schedule APIs without exposing them to family sessi
   });
 });
 
+test("creates and updates child profiles without changing immutable submission snapshots", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    const legacy = service.administratorChildManagement(fixture.actorAdmin).children.find((child) => child.id === "child-a1");
+    assert.equal(legacy.name, "架空園児A1");
+    assert.equal(legacy.lastName, null);
+
+    const createdManagement = service.createChild(fixture.actorAdmin, {
+      familyId: "family-a",
+      lastName: "未来",
+      firstName: "花子",
+      lastNameKana: "ミライ",
+      firstNameKana: "ハナコ",
+      className: "架空組D",
+      birthDate: "2025-05-01",
+      enrollmentDate: "2026-09-01",
+      withdrawalDate: "",
+      familyActiveFrom: "2026-09-01",
+      familyActiveTo: "",
+      status: "enrolled",
+    });
+    const created = createdManagement.children.find((child) => child.lastName === "未来" && child.firstName === "花子");
+    assert.ok(created);
+    const createdRaw = database.prepare("SELECT * FROM children WHERE id = ?").get(created.id);
+    assert.equal(createdRaw.name, "未来 花子");
+    assert.equal(createdRaw.kana, "ミライ ハナコ");
+    assert.equal(created.memberships[0].familyId, "family-a");
+
+    service.dashboard(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorA);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const submittedRaw = rawSubmissionVersion(database, submitted.id);
+
+    service.updateChild(fixture.actorAdmin, "child-a1", {
+      originalFamilyId: "family-a",
+      familyId: "family-a",
+      lastName: "山田",
+      firstName: "はると",
+      lastNameKana: "ヤマダ",
+      firstNameKana: "ハルト",
+      className: "架空組A",
+      birthDate: "2025-04-10",
+      enrollmentDate: "2026-09-01",
+      withdrawalDate: "2026-09-30",
+      familyActiveFrom: "2026-09-01",
+      familyActiveTo: "2026-09-30",
+      status: "withdrawn",
+    });
+    const updated = database.prepare("SELECT * FROM children WHERE id = 'child-a1'").get();
+    assert.equal(updated.name, "山田 はると");
+    assert.equal(updated.kana, "ヤマダ ハルト");
+    assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
+
+    assert.throws(
+      () => service.createChild(fixture.actorAdmin, {
+        familyId: "family-a", lastName: "不正", firstName: "日付", lastNameKana: "フセイ", firstNameKana: "ヒヅケ",
+        birthDate: "2025-01-01", enrollmentDate: "2026-09-10", withdrawalDate: "2026-09-01",
+        familyActiveFrom: "2026-09-10", familyActiveTo: "2026-09-01", status: "enrolled",
+      }),
+      (error) => error.code === "INVALID_DATE_RANGE",
+    );
+    assert.throws(
+      () => service.updateChild(fixture.actorAdmin, "child-a1", {
+        originalFamilyId: "family-a", familyId: "family-b",
+        lastName: "山田", firstName: "はると", lastNameKana: "ヤマダ", firstNameKana: "ハルト",
+        birthDate: "2025-04-10", enrollmentDate: "2026-09-01", withdrawalDate: "2026-09-30",
+        familyActiveFrom: "2026-09-15", familyActiveTo: "2026-09-20", status: "withdrawn",
+      }),
+      (error) => error.code === "MEMBERSHIP_OVERLAP",
+    );
+    assert.throws(
+      () => service.createChild(fixture.actorA, {
+        familyId: "family-a", lastName: "権限", firstName: "なし", lastNameKana: "ケンゲン", firstNameKana: "ナシ",
+        birthDate: "2025-01-01", enrollmentDate: "2026-09-01", familyActiveFrom: "2026-09-01",
+      }),
+      (error) => error.code === "FORBIDDEN",
+    );
+  });
+});
+
+test("records Monday-to-Saturday basic patterns and applies them only by explicit parent action", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    let dashboard = service.dashboard(fixture.actorA);
+    const monday = dashboard.children.find((child) => child.id === "child-a1").schedule.days.find((day) => day.date === "2026-09-07");
+    const sunday = dashboard.children.find((child) => child.id === "child-a1").schedule.days.find((day) => day.date === "2026-09-06");
+    const closure = dashboard.children.find((child) => child.id === "child-a1").schedule.days.find((day) => day.date === "2026-09-21");
+    assert.equal(monday.arrivalTime, "08:30");
+    assert.equal(sunday.usageStatus, "closed");
+    assert.equal(closure.usageStatus, "closed");
+    database.prepare("UPDATE daily_schedules SET source = 'daily' WHERE id = ?").run(monday.id);
+
+    service.submitFamilySchedules(fixture.actorA);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const submittedRaw = rawSubmissionVersion(database, submitted.id);
+    const patterns = [1, 2, 3, 4, 5, 6].map((weekday) => ({
+      weekday,
+      enabled: weekday <= 5,
+      arrivalTime: weekday <= 5 ? "09:00" : null,
+      departureTime: weekday <= 5 ? "16:00" : null,
+    }));
+    const result = service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
+      reason: "架空の利用時間変更",
+      patterns,
+    });
+    assert.equal(result.changed, true);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a1'").get().count, 5);
+    const operation = database.prepare(
+      "SELECT detail_json FROM operation_logs WHERE operation = 'basic_usage_pattern.changed' ORDER BY occurred_at DESC LIMIT 1",
+    ).get();
+    assert.equal(JSON.parse(operation.detail_json).reason, "架空の利用時間変更");
+    assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
+    assert.equal(database.prepare("SELECT arrival_time FROM daily_schedules WHERE id = ?").get(monday.id).arrival_time, "08:30");
+    assert.equal(database.prepare("SELECT source FROM daily_schedules WHERE id = ?").get(monday.id).source, "daily");
+
+    const beforeNoChange = database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a1'").get().count;
+    const noChange = service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", { reason: "同じ内容", patterns });
+    assert.equal(noChange.changed, false);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a1'").get().count, beforeNoChange);
+    assert.throws(
+      () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
+        reason: "日曜日は対象外",
+        patterns: [{ ...patterns[0], weekday: 0 }, ...patterns.slice(1)],
+      }),
+      (error) => error.code === "INVALID_WEEKDAY",
+    );
+    assert.throws(
+      () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
+        reason: "開園時間外",
+        patterns: patterns.map((pattern) => pattern.weekday === 1 ? { ...pattern, arrivalTime: "06:55" } : pattern),
+      }),
+      (error) => error.code === "OUTSIDE_OPENING_HOURS",
+    );
+    assert.throws(
+      () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
+        reason: "5分単位ではない",
+        patterns: patterns.map((pattern) => pattern.weekday === 1 ? { ...pattern, arrivalTime: "09:03" } : pattern),
+      }),
+      (error) => error.code === "INVALID_TIME",
+    );
+    assert.throws(
+      () => service.updateBasicUsagePatterns(fixture.actorA, "child-a1", { reason: "権限なし", patterns }),
+      (error) => error.code === "FORBIDDEN",
+    );
+
+    dashboard = service.applyBasicUsagePattern(fixture.actorA, "child-a1");
+    const applied = dashboard.children.find((child) => child.id === "child-a1").schedule.days;
+    assert.equal(applied.find((day) => day.date === "2026-09-07").arrivalTime, "09:00");
+    assert.equal(applied.find((day) => day.date === "2026-09-06").usageStatus, "closed");
+    assert.equal(applied.find((day) => day.date === "2026-09-21").usageStatus, "closed");
+    assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
+
+    service.updateChild(fixture.actorAdmin, "child-a2", {
+      originalFamilyId: "family-a",
+      familyId: "family-a",
+      lastName: "未来",
+      firstName: "次郎",
+      lastNameKana: "ミライ",
+      firstNameKana: "ジロウ",
+      className: "架空組B",
+      birthDate: "2025-03-01",
+      enrollmentDate: "2026-09-10",
+      withdrawalDate: "",
+      familyActiveFrom: "2026-09-10",
+      familyActiveTo: "",
+      status: "enrolled",
+    });
+    const childTwoApplied = service.applyBasicUsagePattern(fixture.actorA, "child-a2");
+    assert.equal(
+      childTwoApplied.children.find((child) => child.id === "child-a2").schedule.days.find((day) => day.date === "2026-09-09").usageStatus,
+      "not_enrolled",
+    );
+
+    assert.throws(
+      () => service.applyBasicUsagePattern(fixture.actorB, "child-a1"),
+      (error) => error.code === "CHILD_SCOPE_VIOLATION",
+    );
+
+    database.exec(`
+      CREATE TRIGGER fail_basic_pattern_operation
+      BEFORE INSERT ON operation_logs
+      WHEN NEW.operation = 'basic_usage_pattern.changed'
+      BEGIN
+        SELECT RAISE(FAIL, 'forced basic pattern audit failure');
+      END
+    `);
+    const beforePattern = database.prepare("SELECT * FROM basic_usage_patterns WHERE child_id = 'child-a2' ORDER BY weekday").all().map((row) => ({ ...row }));
+    assert.throws(
+      () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a2", {
+        reason: "ロールバック確認",
+        patterns: patterns.map((pattern) => ({ ...pattern, arrivalTime: pattern.enabled ? "09:30" : null })),
+      }),
+      /forced basic pattern audit failure/,
+    );
+    assert.deepEqual(
+      database.prepare("SELECT * FROM basic_usage_patterns WHERE child_id = 'child-a2' ORDER BY weekday").all().map((row) => ({ ...row })),
+      beforePattern,
+    );
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a2'").get().count, 0);
+  });
+});
+
+test("protects child-management APIs and connects explicit basic-pattern application", async () => {
+  await withScheduleDatabase(async ({ service, authService, fixture }) => {
+    const family = await familySession(authService, "demo-family-a", fixture.passwords.familyA);
+    const administrator = await administratorSession(authService, "demo-schedule-admin", fixture.passwords.administrator);
+    const forbidden = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/children", family),
+      { service, authService },
+    );
+    assert.equal(forbidden.status, 403);
+
+    const managementResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/children", administrator),
+      { service, authService },
+    );
+    assert.equal(managementResponse.status, 200);
+    const management = (await managementResponse.json()).management;
+    assert.equal(management.children.length, 3);
+    assert.ok(!JSON.stringify(management).toLowerCase().includes("password"));
+
+    const missingCsrf = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/children/child-a1/basic-patterns", administrator, {
+        method: "PUT",
+        csrf: false,
+        body: { reason: "CSRF確認", patterns: management.children[0].patterns },
+      }),
+      { service, authService },
+    );
+    assert.equal(missingCsrf.status, 403);
+    assert.equal((await missingCsrf.json()).code, "CSRF_INVALID");
+
+    service.dashboard(fixture.actorA);
+    const applyResponse = await handleFamilyScheduleApiRequest(
+      apiRequest("/api/family/schedule/apply-basic-pattern", family, {
+        method: "POST",
+        body: { childId: "child-b1" },
+      }),
+      { service, authService },
+    );
+    assert.equal(applyResponse.status, 403);
+    assert.equal((await applyResponse.json()).code, "CHILD_SCOPE_VIOLATION");
+  });
+});
+
 test("switches the parent target through the administrator API in one transaction", async () => {
   await withScheduleDatabase(async ({ database, service, authService, fixture }) => {
     database.prepare(

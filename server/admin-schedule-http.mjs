@@ -1,6 +1,11 @@
 import { AuthError } from "../lib/server/auth/permissions.mjs";
 import { assertCsrf, json, readJson, requireSession } from "./auth-http.mjs";
 
+function routeMatch(pathname, pattern) {
+  const match = pathname.match(pattern);
+  return match ? match.slice(1).map(decodeURIComponent) : null;
+}
+
 export async function handleAdminScheduleApiRequest(request, { service, authService } = {}) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/admin/schedules")) return null;
@@ -29,8 +34,23 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
       });
     }
 
+    if (request.method === "GET" && url.pathname === "/api/admin/schedules/children") {
+      return json({ ok: true, management: service.administratorChildManagement(session.actor) });
+    }
+
     if (request.method !== "GET" && request.method !== "HEAD") assertCsrf(request, session);
     const body = await readJson(request);
+    const childUpdate = routeMatch(url.pathname, /^\/api\/admin\/schedules\/children\/([^/]+)$/);
+    const patternUpdate = routeMatch(url.pathname, /^\/api\/admin\/schedules\/children\/([^/]+)\/basic-patterns$/);
+    if (request.method === "POST" && url.pathname === "/api/admin/schedules/children") {
+      return json({ ok: true, management: service.createChild(session.actor, body) }, 201);
+    }
+    if (request.method === "PUT" && childUpdate) {
+      return json({ ok: true, management: service.updateChild(session.actor, childUpdate[0], body) });
+    }
+    if (request.method === "PUT" && patternUpdate) {
+      return json({ ok: true, result: service.updateBasicUsagePatterns(session.actor, patternUpdate[0], body) });
+    }
     if (request.method === "POST" && url.pathname === "/api/admin/schedules/parent-target") {
       return json({ ok: true, result: service.setParentTargetPeriod(session.actor, body) });
     }

@@ -163,6 +163,8 @@ test("adds the protected database-backed parent schedule screen without changing
   assert.match(parentClient, /parent-fixed-actions|child-switcher/);
   assert.match(parentClient, /園から提出期限が延長されています/);
   assert.match(parentClient, /提出後、園で予定を変更しています/);
+  assert.match(parentClient, /基本予定を反映/);
+  assert.match(parentClient, /現在の入力内容は上書きされます/);
   assert.match(familyService, /CHILD_SCOPE_VIOLATION/);
   assert.match(familyService, /BEGIN IMMEDIATE/);
   assert.match(familyService, /Asia\/Tokyo|TOKYO_OFFSET_MINUTES/);
@@ -173,10 +175,11 @@ test("adds the protected database-backed parent schedule screen without changing
 });
 
 test("connects protected administrator schedule operations without changing the prototype", async () => {
-  const [page, adminPage, adminClient, adminHttp, gateway, authHttp, worker, familyService] = await Promise.all([
+  const [page, adminPage, adminClient, childManagement, adminHttp, gateway, authHttp, worker, familyService] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/admin/schedules/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminScheduleClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminChildManagement.tsx", import.meta.url), "utf8"),
     readFile(new URL("../server/admin-schedule-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/auth-http.mjs", import.meta.url), "utf8"),
@@ -187,6 +190,8 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(page, /loadPrototypeStore/);
   assert.match(adminPage, /AdminScheduleClient/);
   assert.match(adminClient, /保護者向け対象月|家庭別期限延長|最新提出内容の確認|保存前の確認|変更履歴/);
+  assert.match(adminClient, /AdminChildManagement/);
+  assert.match(childManagement, /園児を新規登録|基本利用パターン|基本利用パターン履歴|変更理由/);
   assert.match(adminClient, /EFFECTIVE_VERSION_CHANGED|NO_CHANGES/);
   assert.match(adminHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
   assert.match(adminHttp, /assertCsrf/);

@@ -31,6 +31,13 @@ export async function handleFamilyScheduleApiRequest(request, { service, authSer
       return json({ ok: true, dashboard: service.copyChildScheduleToSiblings(session.actor, body.sourceChildId) });
     }
 
+    if (request.method === "POST" && url.pathname === "/api/family/schedule/apply-basic-pattern") {
+      const session = requireSession(request, authService, { type: "family" });
+      assertCsrf(request, session);
+      const body = await readJson(request);
+      return json({ ok: true, dashboard: service.applyBasicUsagePattern(session.actor, body.childId) });
+    }
+
     if (request.method === "POST" && url.pathname === "/api/family/schedule/submit") {
       const session = requireSession(request, authService, { type: "family" });
       assertCsrf(request, session);

@@ -360,6 +360,27 @@ export function ParentScheduleClient() {
     replaceCurrentChildDays(nextDays, `${bulkWeekdays.find((item) => item.value === bulkWeekday)?.label ?? "曜日"}の予定を自動保存しています。`);
   }
 
+  async function applyBasicPattern() {
+    if (!isAvailableDashboard(data) || !currentChild || !prepareEdit()) return;
+    const ok = window.confirm("園に登録されている基本予定を反映します。現在の入力内容は上書きされます。よろしいですか？");
+    if (!ok) return;
+    const saved = await flushAutosave();
+    if (!saved) return;
+    setSaveState("saving");
+    try {
+      const result = await api<{ dashboard: Dashboard }>("/api/family/schedule/apply-basic-pattern", {
+        method: "POST",
+        body: { childId: currentChild.id },
+      });
+      setData(result.dashboard);
+      setSaveState("saved");
+      setMessage("基本予定を反映しました。休園日と在籍期間外の日付は変更していません。");
+    } catch (error) {
+      setSaveState("failed");
+      setMessage(error instanceof Error ? error.message : "基本予定を反映できませんでした。");
+    }
+  }
+
   async function copyToSiblings() {
     if (!isAvailableDashboard(data) || !currentChild || !prepareEdit()) return;
     const ok = window.confirm("この子の予定を兄弟姉妹にも反映します。兄弟姉妹の既存入力は上書きされます。よろしいですか？");
@@ -498,7 +519,10 @@ export function ParentScheduleClient() {
                 <span className="parent-eyebrow">対象月だけに反映</span>
                 <h2>曜日ごとの一括変更</h2>
               </div>
-              <button type="button" disabled={readonly} onClick={applyWeekdayBulk}>反映</button>
+              <div className="parent-section-actions">
+                <button type="button" disabled={readonly || saveState === "saving"} onClick={() => void applyBasicPattern()}>基本予定を反映</button>
+                <button type="button" disabled={readonly} onClick={applyWeekdayBulk}>曜日設定を反映</button>
+              </div>
             </div>
             <div className="weekday-bulk-form">
               <label>
