@@ -104,6 +104,22 @@ async function familySession(authService, loginId, password) {
   };
 }
 
+function rawSubmissionVersion(database, versionId) {
+  return {
+    version: database.prepare("SELECT * FROM family_submission_versions WHERE id = ?").get(versionId),
+    children: database.prepare(
+      "SELECT * FROM family_submission_version_children WHERE version_id = ? ORDER BY child_id",
+    ).all(versionId),
+    days: database.prepare(
+      `SELECT d.*
+       FROM family_submission_version_days d
+       JOIN family_submission_version_children c ON c.id = d.version_child_id
+       WHERE c.version_id = ?
+       ORDER BY c.child_id, d.date`,
+    ).all(versionId),
+  };
+}
+
 test("creates only the active target month from child-specific base patterns without overwriting drafts", async () => {
   await withScheduleDatabase(async ({ database, service, fixture }) => {
     const dashboard = service.dashboard(fixture.actorA);
@@ -187,15 +203,64 @@ test("submits every child in one transaction, rolls back on failure, and records
       END
     `);
     assert.throws(() => service.submitFamilySchedules(fixture.actorA), /forced submit failure/);
-    assert.equal(database.prepare("SELECT status, submitted_at FROM family_submissions WHERE family_id = 'family-a'").get().status, "draft");
-    assert.equal(database.prepare("SELECT submitted_at FROM family_submissions WHERE family_id = 'family-a'").get().submitted_at, null);
+    const rolledBackSubmission = database.prepare(
+      `SELECT status, submitted_at, latest_submitted_version_id,
+              latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a'`,
+    ).get();
+    assert.deepEqual({ ...rolledBackSubmission }, {
+      status: "draft",
+      submitted_at: null,
+      latest_submitted_version_id: null,
+      latest_confirmed_version_id: null,
+      latest_effective_version_id: null,
+    });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_versions").get().count, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_version_children").get().count, 0);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_version_days").get().count, 0);
 
     database.exec("DROP TRIGGER fail_submit_for_test");
     let dashboard = service.submitFamilySchedules(fixture.actorA);
     const firstSubmittedAt = dashboard.submission.submittedAt;
+    const firstVersion = service.latestSubmittedVersion(fixture.actorA);
     assert.equal(dashboard.submission.status, "submitted");
+    assert.equal(firstVersion.sequenceNumber, 1);
+    assert.equal(firstVersion.versionType, "parent_submission");
+    assert.equal(firstVersion.reviewStatus, "pending");
+    assert.equal(firstVersion.sourceVersionId, null);
+    assert.equal(firstVersion.submittedAt, firstSubmittedAt);
+    assert.equal(firstVersion.createdByFamilyAccountId, fixture.actorA.id);
+    assert.equal(firstVersion.submissionPeriodId, "period-2026-09");
+    assert.deepEqual(firstVersion.children.map((child) => child.childId).sort(), ["child-a1", "child-a2"]);
+    assert.ok(firstVersion.children.every((child) => child.days.length === 30));
+
+    const firstChild = firstVersion.children.find((child) => child.childId === "child-a1");
+    const firstUsingDay = firstChild.days.find((day) => day.date === "2026-09-01");
+    assert.deepEqual(
+      {
+        usageStatus: firstUsingDay.usageStatus,
+        arrivalTime: firstUsingDay.arrivalTime,
+        departureTime: firstUsingDay.departureTime,
+      },
+      { usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" },
+    );
+    assert.equal(firstChild.days.find((day) => day.date === "2026-09-05").usageStatus, "off");
+    assert.equal(firstChild.days.find((day) => day.date === "2026-09-05").arrivalTime, null);
+    assert.equal(firstChild.days.find((day) => day.date === "2026-09-21").usageStatus, "closed");
+    assert.equal(firstChild.days.find((day) => day.date === "2026-09-21").departureTime, null);
+
+    const firstPointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a'`,
+    ).get();
+    assert.deepEqual({ ...firstPointers }, {
+      latest_submitted_version_id: firstVersion.id,
+      latest_confirmed_version_id: null,
+      latest_effective_version_id: firstVersion.id,
+    });
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM monthly_schedules WHERE status = 'submitted' AND child_id IN ('child-a1', 'child-a2')").get().count, 2);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM change_histories WHERE family_id = 'family-a' AND reason_text = '初回提出'").get().count, 1);
+    const firstRawSnapshot = rawSubmissionVersion(database, firstVersion.id);
 
     clock.value = new Date("2026-08-21T00:00:00.000Z");
     dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
@@ -203,12 +268,92 @@ test("submits every child in one transaction, rolls back on failure, and records
     });
     assert.equal(dashboard.submission.revisionRequired, true);
     assert.equal(dashboard.submission.submittedAt, firstSubmittedAt);
+    assert.equal(service.latestSubmittedVersion(fixture.actorA).id, firstVersion.id);
+    assert.equal(
+      service.latestSubmittedVersion(fixture.actorA)
+        .children.find((child) => child.childId === "child-a1")
+        .days.find((day) => day.date === "2026-09-02").usageStatus,
+      "using",
+    );
+    assert.deepEqual(rawSubmissionVersion(database, firstVersion.id), firstRawSnapshot);
+
     clock.value = new Date("2026-08-21T01:00:00.000Z");
     dashboard = service.submitFamilySchedules(fixture.actorA);
+    const secondVersion = service.latestSubmittedVersion(fixture.actorA);
     assert.equal(dashboard.submission.status, "submitted");
     assert.notEqual(dashboard.submission.submittedAt, firstSubmittedAt);
+    assert.notEqual(secondVersion.id, firstVersion.id);
+    assert.equal(secondVersion.sequenceNumber, 2);
+    assert.equal(secondVersion.sourceVersionId, firstVersion.id);
+    assert.equal(secondVersion.submittedAt, dashboard.submission.submittedAt);
+    assert.equal(
+      secondVersion.children.find((child) => child.childId === "child-a1")
+        .days.find((day) => day.date === "2026-09-02").usageStatus,
+      "off",
+    );
+    assert.deepEqual(rawSubmissionVersion(database, firstVersion.id), firstRawSnapshot);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_versions").get().count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_version_children").get().count, 4);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_version_days").get().count, 120);
+    const secondPointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a'`,
+    ).get();
+    assert.deepEqual({ ...secondPointers }, {
+      latest_submitted_version_id: secondVersion.id,
+      latest_confirmed_version_id: null,
+      latest_effective_version_id: secondVersion.id,
+    });
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM change_histories WHERE family_id = 'family-a' AND reason_text = '再提出'").get().count, 1);
     assert.ok(database.prepare("SELECT COUNT(*) AS count FROM change_histories WHERE family_id = 'family-a' AND target_date = '2026-09-02'").get().count >= 1);
+  });
+});
+
+test("keeps submission versions isolated by family and target month", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    service.dashboard(fixture.actorA);
+    service.dashboard(fixture.actorB);
+    assert.equal(service.latestSubmittedVersion(fixture.actorB), null);
+
+    database.exec(`
+      INSERT INTO submission_periods
+      (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+      VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'draft', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      INSERT INTO family_submissions
+      (id, family_id, submission_period_id, status, submitted_at, last_updated_at, created_at)
+      VALUES ('submission-a-oct', 'family-a', 'period-2026-10', 'draft', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      INSERT INTO monthly_schedules
+      (id, child_id, submission_period_id, family_submission_id, status, base_pattern_snapshot_json, confirmed_at, created_at, updated_at)
+      VALUES ('monthly-a1-oct', 'child-a1', 'period-2026-10', 'submission-a-oct', 'draft', '[]', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+      INSERT INTO daily_schedules
+      (id, monthly_schedule_id, date, usage_status, arrival_time, departure_time, source, changed, created_at, updated_at)
+      VALUES ('day-a1-oct-01', 'monthly-a1-oct', '2026-10-01', 'using', '09:00', '16:00', 'daily', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+    `);
+
+    service.submitFamilySchedules(fixture.actorA);
+    const familyAVersion = service.latestSubmittedVersion(fixture.actorA);
+    assert.equal(familyAVersion.familyId, "family-a");
+    assert.equal(familyAVersion.submissionPeriodId, "period-2026-09");
+    assert.deepEqual(familyAVersion.children.map((child) => child.childId).sort(), ["child-a1", "child-a2"]);
+    assert.ok(familyAVersion.children.flatMap((child) => child.days).every((day) => day.date.startsWith("2026-09-")));
+    assert.equal(service.latestSubmittedVersion(fixture.actorB), null);
+
+    service.submitFamilySchedules(fixture.actorB);
+    const familyBVersion = service.latestSubmittedVersion(fixture.actorB);
+    assert.equal(familyBVersion.familyId, "family-b");
+    assert.equal(familyBVersion.submissionPeriodId, "period-2026-09");
+    assert.deepEqual(familyBVersion.children.map((child) => child.childId), ["child-b1"]);
+    assert.equal(service.latestSubmittedVersion(fixture.actorA).id, familyAVersion.id);
+    assert.deepEqual(
+      database.prepare(
+        `SELECT family_id, submission_period_id, sequence_number
+         FROM family_submission_versions ORDER BY family_id`,
+      ).all().map((row) => ({ ...row })),
+      [
+        { family_id: "family-a", submission_period_id: "period-2026-09", sequence_number: 1 },
+        { family_id: "family-b", submission_period_id: "period-2026-09", sequence_number: 1 },
+      ],
+    );
   });
 });
 
