@@ -1120,16 +1120,260 @@ test("creates a new immutable submission version when resubmitting during a fami
   });
 });
 
-test("does not choose a target month when active periods are missing or duplicated", async () => {
+test("selects only the explicit parent target and switches it transactionally", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    database.prepare(
+      `INSERT INTO submission_periods
+       (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'open', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+
+    let dashboard = service.dashboard(fixture.actorA);
+    assert.equal(dashboard.period.id, "period-2026-09");
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      submissionPeriodId: "period-2026-10",
+      days: daysWithPatch(dashboard, "child-a1", "2026-09-01", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+    });
+    assert.equal(dashboard.period.id, "period-2026-09");
+    service.submitFamilySchedules(fixture.actorA, { submissionPeriodId: "period-2026-10" });
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-10'",
+    ).get().count, 0);
+    assert.throws(
+      () => service.setParentTargetPeriod(fixture.actorA, { submissionPeriodId: "period-2026-10" }),
+      (error) => error.code === "FORBIDDEN",
+    );
+
+    const switched = service.setParentTargetPeriod(fixture.actorAdmin, { submissionPeriodId: "period-2026-10" });
+    assert.equal(switched.submissionPeriodId, "period-2026-10");
+    assert.equal(switched.idempotent, false);
+    assert.deepEqual(switched.previousSubmissionPeriodIds, ["period-2026-09"]);
+    assert.deepEqual(database.prepare(
+      "SELECT id, is_parent_target FROM submission_periods ORDER BY target_month",
+    ).all().map((row) => ({ ...row })), [
+      { id: "period-2026-09", is_parent_target: 0 },
+      { id: "period-2026-10", is_parent_target: 1 },
+    ]);
+    dashboard = service.dashboard(fixture.actorA);
+    assert.equal(dashboard.period.id, "period-2026-10");
+    assert.equal(dashboard.period.editable, true);
+
+    const operation = database.prepare(
+      `SELECT actor_type, actor_id, target_type, target_id, target_month, detail_json
+       FROM operation_logs WHERE operation = 'submission_period.parent_target_changed'`,
+    ).get();
+    assert.equal(operation.actor_type, "administrator");
+    assert.equal(operation.actor_id, fixture.actorAdmin.id);
+    assert.equal(operation.target_type, "submission_period");
+    assert.equal(operation.target_id, "period-2026-10");
+    assert.equal(operation.target_month, "2026-10");
+    assert.deepEqual(JSON.parse(operation.detail_json), {
+      administratorId: fixture.actorAdmin.id,
+      previousSubmissionPeriodIds: ["period-2026-09"],
+      newSubmissionPeriodId: "period-2026-10",
+      performedAt: "2026-08-20T00:00:00.000Z",
+    });
+
+    database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-10'").run();
+    dashboard = service.dashboard(fixture.actorA);
+    assert.equal(dashboard.available, true);
+    assert.equal(dashboard.period.id, "period-2026-10");
+    assert.equal(dashboard.period.editable, false);
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", {
+        days: daysWithPatch(dashboard, "child-a1", "2026-10-01", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+      }),
+      (error) => error.code === "SUBMISSION_LOCKED",
+    );
+
+    database.exec(`
+      CREATE TEMP TRIGGER fail_parent_target_switch_for_test
+      BEFORE INSERT ON operation_logs
+      WHEN NEW.operation = 'submission_period.parent_target_changed'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced parent target switch failure');
+      END
+    `);
+    assert.throws(
+      () => service.setParentTargetPeriod(fixture.actorMaster, { submissionPeriodId: "period-2026-09" }),
+      /forced parent target switch failure/,
+    );
+    assert.deepEqual(database.prepare(
+      "SELECT id, is_parent_target FROM submission_periods ORDER BY target_month",
+    ).all().map((row) => ({ ...row })), [
+      { id: "period-2026-09", is_parent_target: 0 },
+      { id: "period-2026-10", is_parent_target: 1 },
+    ]);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'submission_period.parent_target_changed'",
+    ).get().count, 1);
+  });
+});
+
+test("uses split child identity and inclusive enrollment periods consistently", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    database.prepare(
+      `UPDATE children
+       SET last_name = '山田', first_name = 'はると',
+           last_name_kana = 'ヤマダ', first_name_kana = 'ハルト',
+           birth_date = '2025-06-10', enrollment_date = '2026-09-15', withdrawal_date = '2026-09-18'
+       WHERE id = 'child-a1'`,
+    ).run();
+    database.prepare(
+      `UPDATE children
+       SET kana = 'カクウエンジエーツー', birth_date = '2024-04-02',
+           enrollment_date = '2026-09-01', withdrawal_date = '2026-09-30', status = 'withdrawn'
+       WHERE id = 'child-a2'`,
+    ).run();
+    database.prepare(
+      `INSERT INTO children
+       (id, child_code, name, kana, class_name, birth_date, enrollment_date, status, created_at, updated_at)
+       VALUES ('child-a3', 'DEMO-CHILD-A3', 'Future Child', 'フューチャーチャイルド', 'Future Class',
+               '2025-01-01', '2026-10-01', 'enrolled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+    database.prepare(
+      `INSERT INTO family_children
+       (family_id, child_id, relationship_label, is_primary, sort_order, active_from, created_at)
+       VALUES ('family-a', 'child-a3', 'Test guardian', 1, 3, '2026-10-01', CURRENT_TIMESTAMP)`,
+    ).run();
+    database.prepare(
+      `INSERT INTO children
+       (id, child_code, name, kana, class_name, birth_date, enrollment_date, status, created_at, updated_at)
+       VALUES ('child-a4', 'DEMO-CHILD-A4', 'Membership Child', 'メンバーシップチャイルド', 'Test Class',
+               '2025-02-01', '2026-09-01', 'enrolled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+    database.prepare(
+      `INSERT INTO family_children
+       (family_id, child_id, relationship_label, is_primary, sort_order, active_from, active_to, created_at)
+       VALUES ('family-a', 'child-a4', 'Test guardian', 1, 4, '2026-09-10', '2026-09-11', CURRENT_TIMESTAMP)`,
+    ).run();
+    for (let weekday = 1; weekday <= 6; weekday += 1) {
+      database.prepare(
+        `INSERT INTO basic_usage_patterns
+         (id, child_id, weekday, enabled, arrival_time, departure_time, valid_from, created_at, updated_at)
+         VALUES (?, 'child-a4', ?, ?, '08:30', '17:30', '2026-09-01', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ).run(`child-a4-pattern-${weekday}`, weekday, weekday <= 5 ? 1 : 0);
+    }
+
+    let dashboard = service.dashboard(fixture.actorA);
+    assert.deepEqual(dashboard.children.map((child) => child.id), ["child-a1", "child-a2", "child-a4"]);
+    const splitChild = dashboard.children.find((child) => child.id === "child-a1");
+    const legacyChild = dashboard.children.find((child) => child.id === "child-a2");
+    assert.equal(splitChild.name, "山田 はると");
+    assert.equal(splitChild.kana, "ヤマダ ハルト");
+    assert.equal(splitChild.birthDate, "2025-06-10");
+    assert.equal(splitChild.enrollmentDate, "2026-09-15");
+    assert.equal(splitChild.withdrawalDate, "2026-09-18");
+    assert.equal(legacyChild.name, "架空園児A2");
+    assert.equal(legacyChild.kana, "カクウエンジエーツー");
+    assert.equal(splitChild.schedule.days.find((day) => day.date === "2026-09-14").usageStatus, "not_enrolled");
+    assert.equal(splitChild.schedule.days.find((day) => day.date === "2026-09-15").usageStatus, "using");
+    assert.equal(splitChild.schedule.days.find((day) => day.date === "2026-09-18").usageStatus, "using");
+    assert.equal(splitChild.schedule.days.find((day) => day.date === "2026-09-19").usageStatus, "not_enrolled");
+    assert.equal(legacyChild.schedule.days.find((day) => day.date === "2026-09-01").usageStatus, "using");
+    assert.equal(legacyChild.schedule.days.find((day) => day.date === "2026-09-30").usageStatus, "using");
+    const membershipChild = dashboard.children.find((child) => child.id === "child-a4");
+    assert.equal(membershipChild.schedule.days.find((day) => day.date === "2026-09-09").usageStatus, "not_enrolled");
+    assert.equal(membershipChild.schedule.days.find((day) => day.date === "2026-09-10").usageStatus, "using");
+    assert.equal(membershipChild.schedule.days.find((day) => day.date === "2026-09-11").usageStatus, "using");
+    assert.equal(membershipChild.schedule.days.find((day) => day.date === "2026-09-12").usageStatus, "not_enrolled");
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", {
+        days: daysWithPatch(dashboard, "child-a1", "2026-09-14", { usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" }),
+      }),
+      (error) => error.code === "LOCKED_DAY",
+    );
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", {
+        days: daysWithPatch(dashboard, "child-a1", "2026-09-19", { usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" }),
+      }),
+      (error) => error.code === "LOCKED_DAY",
+    );
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a3", { days: splitChild.schedule.days }),
+      (error) => error.code === "CHILD_SCOPE_VIOLATION",
+    );
+
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a2", {
+      days: daysWithPatch(dashboard, "child-a2", "2026-09-16", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+    });
+    dashboard = service.copyChildScheduleToSiblings(fixture.actorA, "child-a2");
+    assert.equal(
+      dashboard.children.find((child) => child.id === "child-a1")
+        .schedule.days.find((day) => day.date === "2026-09-16").usageStatus,
+      "off",
+    );
+    assert.equal(
+      dashboard.children.find((child) => child.id === "child-a1")
+        .schedule.days.find((day) => day.date === "2026-09-14").usageStatus,
+      "not_enrolled",
+    );
+
+    service.submitFamilySchedules(fixture.actorA);
+    const firstSubmitted = service.latestSubmittedVersion(fixture.actorA);
+    const firstChildSnapshot = firstSubmitted.children.find((child) => child.childId === "child-a1");
+    const legacyChildSnapshot = firstSubmitted.children.find((child) => child.childId === "child-a2");
+    assert.deepEqual(firstSubmitted.children.map((child) => child.childId).sort(), ["child-a1", "child-a2", "child-a4"]);
+    assert.equal(firstChildSnapshot.name, "山田 はると");
+    assert.equal(firstChildSnapshot.kana, "ヤマダ ハルト");
+    assert.equal(firstChildSnapshot.lastName, "山田");
+    assert.equal(firstChildSnapshot.firstName, "はると");
+    assert.equal(firstChildSnapshot.birthDate, "2025-06-10");
+    assert.equal(firstChildSnapshot.enrollmentDate, "2026-09-15");
+    assert.equal(firstChildSnapshot.withdrawalDate, "2026-09-18");
+    assert.equal(legacyChildSnapshot.name, "架空園児A2");
+    assert.equal(legacyChildSnapshot.kana, "カクウエンジエーツー");
+    assert.equal(firstChildSnapshot.days.find((day) => day.date === "2026-09-14").usageStatus, "not_enrolled");
+    assert.equal(firstChildSnapshot.days.find((day) => day.date === "2026-09-18").usageStatus, "using");
+    assert.equal(firstChildSnapshot.days.find((day) => day.date === "2026-09-19").usageStatus, "not_enrolled");
+
+    const submittedRaw = rawSubmissionVersion(database, firstSubmitted.id);
+    const confirmed = service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    const confirmedRaw = rawSubmissionVersion(database, confirmed.id);
+    const preview = service.previewAdministratorRevision(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: "Correct one enrolled day",
+      changes: [{ childId: "child-a1", date: "2026-09-17", usageStatus: "off" }],
+    });
+    const revision = service.createAdministratorRevision(fixture.actorAdmin, {
+      ...preview,
+      changes: [{ childId: "child-a1", date: "2026-09-17", usageStatus: "off" }],
+    });
+    const revisionRaw = rawSubmissionVersion(database, revision.id);
+    database.prepare(
+      `UPDATE children
+       SET last_name = '佐藤', first_name = 'みらい',
+           last_name_kana = 'サトウ', first_name_kana = 'ミライ'
+       WHERE id = 'child-a1'`,
+    ).run();
+    service.submitFamilySchedules(fixture.actorA);
+    const secondSubmitted = service.latestSubmittedVersion(fixture.actorA);
+    assert.equal(secondSubmitted.children.find((child) => child.childId === "child-a1").name, "佐藤 みらい");
+    assert.deepEqual(rawSubmissionVersion(database, firstSubmitted.id), submittedRaw);
+    assert.deepEqual(rawSubmissionVersion(database, confirmed.id), confirmedRaw);
+    assert.deepEqual(rawSubmissionVersion(database, revision.id), revisionRaw);
+  });
+});
+
+test("does not choose a parent target when it is unavailable or duplicated", async () => {
   await withScheduleDatabase(async ({ database, service, fixture }) => {
     database.prepare("UPDATE submission_periods SET status = 'draft' WHERE id = 'period-2026-09'").run();
     let dashboard = service.dashboard(fixture.actorA);
+    assert.equal(dashboard.available, false);
+    assert.equal(dashboard.periodCount, 1);
+
+    database.prepare("UPDATE submission_periods SET status = 'open', is_parent_target = 0 WHERE id = 'period-2026-09'").run();
+    dashboard = service.dashboard(fixture.actorA);
     assert.equal(dashboard.available, false);
     assert.equal(dashboard.periodCount, 0);
 
     // Reproduce an otherwise constrained corruption state only inside this disposable test database.
     database.exec("DROP INDEX uq_submission_periods_single_parent_target");
-    database.prepare("UPDATE submission_periods SET status = 'open' WHERE id = 'period-2026-09'").run();
+    database.prepare("UPDATE submission_periods SET is_parent_target = 1 WHERE id = 'period-2026-09'").run();
     database.prepare(
       `INSERT INTO submission_periods
        (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
