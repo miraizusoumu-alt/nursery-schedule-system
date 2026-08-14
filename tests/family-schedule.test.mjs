@@ -157,6 +157,26 @@ function submissionVersionPayload(database, versionId) {
   };
 }
 
+function mutableSchedulePayload(database, familyId, submissionPeriodId) {
+  return {
+    monthly: database.prepare(
+      `SELECT m.*
+       FROM monthly_schedules m
+       JOIN family_submissions s ON s.id = m.family_submission_id
+       WHERE s.family_id = ? AND s.submission_period_id = ?
+       ORDER BY m.child_id`,
+    ).all(familyId, submissionPeriodId).map((row) => ({ ...row })),
+    daily: database.prepare(
+      `SELECT d.*
+       FROM daily_schedules d
+       JOIN monthly_schedules m ON m.id = d.monthly_schedule_id
+       JOIN family_submissions s ON s.id = m.family_submission_id
+       WHERE s.family_id = ? AND s.submission_period_id = ?
+       ORDER BY m.child_id, d.date`,
+    ).all(familyId, submissionPeriodId).map((row) => ({ ...row })),
+  };
+}
+
 test("creates only the active target month from child-specific base patterns without overwriting drafts", async () => {
   await withScheduleDatabase(async ({ database, service, fixture }) => {
     const dashboard = service.dashboard(fixture.actorA);
@@ -598,6 +618,326 @@ test("rolls back the complete administrator confirmation when final audit loggin
       latest_confirmed_version_id: null,
       latest_effective_version_id: submitted.id,
     });
+  });
+});
+
+test("previews and creates immutable administrator revisions from the current effective version", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
+    service.dashboard(fixture.actorA);
+    service.dashboard(fixture.actorB);
+    service.submitFamilySchedules(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorB);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const familyBSubmitted = service.latestSubmittedVersion(fixture.actorB);
+    const confirmed = service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    const confirmedRaw = rawSubmissionVersion(database, confirmed.id);
+    const confirmedPayload = submissionVersionPayload(database, confirmed.id);
+    const mutableBefore = mutableSchedulePayload(database, "family-a", "period-2026-09");
+    const versionCountBeforePreview = database.prepare(
+      "SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'",
+    ).get().count;
+
+    const changes = [
+      { childId: "child-a1", date: "2026-09-01", usageStatus: "off" },
+      { childId: "child-a1", date: "2026-09-02", usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" },
+      { childId: "child-a1", date: "2026-09-05", usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" },
+    ];
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorA, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        reason: "Test revision",
+        changes,
+      }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        reason: "",
+        changes,
+      }),
+      (error) => error.code === "INVALID_REASON",
+    );
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        reason: "Invalid child",
+        changes: [{ childId: "child-b1", date: "2026-09-01", usageStatus: "off" }],
+      }),
+      (error) => error.code === "CHILD_SCOPE_VIOLATION",
+    );
+    assert.throws(
+      () => service.createAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-b",
+        submissionPeriodId: "period-2026-09",
+        sourceVersionId: confirmed.id,
+        reason: "Wrong family source",
+        changes: [{ childId: "child-b1", date: "2026-09-01", usageStatus: "off" }],
+      }),
+      (error) => error.code === "EFFECTIVE_VERSION_CHANGED",
+    );
+    assert.notEqual(familyBSubmitted.id, confirmed.id);
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        reason: "Outside target month",
+        changes: [{ childId: "child-a1", date: "2026-10-01", usageStatus: "off" }],
+      }),
+      (error) => error.code === "INVALID_DATE",
+    );
+    database.prepare(
+      `INSERT INTO submission_periods
+       (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'draft', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-10",
+        reason: "Draft period",
+        changes: [{ childId: "child-a1", date: "2026-10-01", usageStatus: "off" }],
+      }),
+      (error) => error.code === "PERIOD_NOT_REVIEWABLE",
+    );
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        reason: "Invalid time",
+        changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "using", arrivalTime: "08:32", departureTime: "17:30" }],
+      }),
+      (error) => error.code === "INVALID_TIME",
+    );
+    assert.throws(
+      () => service.previewAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        reason: "Locked day",
+        changes: [{ childId: "child-a1", date: "2026-09-21", usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" }],
+      }),
+      (error) => error.code === "LOCKED_DAY",
+    );
+
+    const preview = service.previewAdministratorRevision(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: "Parent requested a correction after submission",
+      changes,
+    });
+    assert.equal(preview.sourceVersionId, confirmed.id);
+    assert.equal(preview.changedDateCount, 3);
+    assert.deepEqual(preview.changes.map((change) => [change.childId, change.date]), [
+      ["child-a1", "2026-09-01"],
+      ["child-a1", "2026-09-02"],
+      ["child-a1", "2026-09-05"],
+    ]);
+    assert.deepEqual(preview.changes[0].before, {
+      date: "2026-09-01",
+      usageStatus: "using",
+      arrivalTime: "08:30",
+      departureTime: "17:30",
+    });
+    assert.deepEqual(preview.changes[0].after, {
+      date: "2026-09-01",
+      usageStatus: "off",
+      arrivalTime: null,
+      departureTime: null,
+    });
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'",
+    ).get().count, versionCountBeforePreview);
+
+    clock.value = new Date("2026-08-30T00:00:00.000Z");
+    database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-09'").run();
+    const revision = service.createAdministratorRevision(fixture.actorAdmin, {
+      ...preview,
+      changes,
+    });
+    assert.equal(revision.sequenceNumber, 3);
+    assert.equal(revision.versionType, "administrator_revision");
+    assert.equal(revision.reviewStatus, "confirmed");
+    assert.equal(revision.sourceVersionId, confirmed.id);
+    assert.equal(revision.createdByAdministratorId, fixture.actorAdmin.id);
+    assert.equal(revision.confirmedByAdministratorId, fixture.actorAdmin.id);
+    assert.equal(revision.reason, preview.reason);
+    assert.equal(revision.changeSummary.changedDateCount, 3);
+    assert.equal(revision.changeSummary.revisionVersionId, revision.id);
+    assert.equal(revision.copied.childCount, 2);
+    assert.equal(revision.copied.dayCount, 60);
+
+    const revisionPayload = submissionVersionPayload(database, revision.id);
+    assert.deepEqual(revisionPayload.children, confirmedPayload.children);
+    const changedKeys = [];
+    for (let index = 0; index < confirmedPayload.days.length; index += 1) {
+      const before = confirmedPayload.days[index];
+      const after = revisionPayload.days[index];
+      assert.equal(after.child_id, before.child_id);
+      assert.equal(after.date, before.date);
+      if (JSON.stringify(after) !== JSON.stringify(before)) changedKeys.push(`${after.child_id}:${after.date}`);
+    }
+    assert.deepEqual(changedKeys, [
+      "child-a1:2026-09-01",
+      "child-a1:2026-09-02",
+      "child-a1:2026-09-05",
+    ]);
+    const revisedDays = new Map(revisionPayload.days.map((day) => [`${day.child_id}:${day.date}`, day]));
+    assert.deepEqual(
+      {
+        usageStatus: revisedDays.get("child-a1:2026-09-01").usage_status,
+        arrivalTime: revisedDays.get("child-a1:2026-09-01").arrival_time,
+        departureTime: revisedDays.get("child-a1:2026-09-01").departure_time,
+      },
+      { usageStatus: "off", arrivalTime: null, departureTime: null },
+    );
+    assert.deepEqual(
+      {
+        usageStatus: revisedDays.get("child-a1:2026-09-05").usage_status,
+        arrivalTime: revisedDays.get("child-a1:2026-09-05").arrival_time,
+        departureTime: revisedDays.get("child-a1:2026-09-05").departure_time,
+      },
+      { usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" },
+    );
+    assert.ok(revisionPayload.days.filter((day) => day.child_id === "child-a2")
+      .every((day, index) => JSON.stringify(day) === JSON.stringify(confirmedPayload.days.filter((entry) => entry.child_id === "child-a2")[index])));
+    assert.deepEqual(rawSubmissionVersion(database, confirmed.id), confirmedRaw);
+    assert.deepEqual(mutableSchedulePayload(database, "family-a", "period-2026-09"), mutableBefore);
+
+    let pointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    assert.deepEqual({ ...pointers }, {
+      latest_submitted_version_id: submitted.id,
+      latest_confirmed_version_id: revision.id,
+      latest_effective_version_id: revision.id,
+    });
+    const operation = database.prepare(
+      `SELECT actor_type, actor_id, target_type, target_id, target_month, detail_json
+       FROM operation_logs WHERE operation = 'family_submission.revised'`,
+    ).get();
+    assert.equal(operation.actor_type, "administrator");
+    assert.equal(operation.actor_id, fixture.actorAdmin.id);
+    assert.equal(operation.target_type, "family_submission");
+    assert.equal(operation.target_id, revision.familySubmissionId);
+    assert.equal(operation.target_month, "2026-09");
+    assert.deepEqual(JSON.parse(operation.detail_json), revision.changeSummary);
+
+    const versionCountAfterRevision = database.prepare(
+      "SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'",
+    ).get().count;
+    assert.throws(
+      () => service.createAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        sourceVersionId: revision.id,
+        reason: "No actual change",
+        changes: [{ childId: "child-a1", date: "2026-09-01", usageStatus: "off" }],
+      }),
+      (error) => error.code === "NO_CHANGES",
+    );
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'",
+    ).get().count, versionCountAfterRevision);
+    assert.throws(
+      () => service.createAdministratorRevision(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+        sourceVersionId: confirmed.id,
+        reason: "Stale preview",
+        changes: [{ childId: "child-a1", date: "2026-09-01", usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" }],
+      }),
+      (error) => error.code === "EFFECTIVE_VERSION_CHANGED" && error.status === 409,
+    );
+
+    const secondPreview = service.previewAdministratorRevision(fixture.actorMaster, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: "Second administrator correction",
+      changes: [{ childId: "child-a1", date: "2026-09-01", usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" }],
+    });
+    const revisionRaw = rawSubmissionVersion(database, revision.id);
+    const secondRevision = service.createAdministratorRevision(fixture.actorMaster, {
+      ...secondPreview,
+      changes: [{ childId: "child-a1", date: "2026-09-01", usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" }],
+    });
+    assert.equal(secondRevision.sequenceNumber, 4);
+    assert.equal(secondRevision.sourceVersionId, revision.id);
+    assert.equal(secondRevision.createdByAdministratorId, fixture.actorMaster.id);
+    assert.deepEqual(rawSubmissionVersion(database, revision.id), revisionRaw);
+    pointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    assert.deepEqual({ ...pointers }, {
+      latest_submitted_version_id: submitted.id,
+      latest_confirmed_version_id: secondRevision.id,
+      latest_effective_version_id: secondRevision.id,
+    });
+  });
+});
+
+test("rolls back an administrator revision when final audit logging fails", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    service.dashboard(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorA);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const confirmed = service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    const confirmedRaw = rawSubmissionVersion(database, confirmed.id);
+    const mutableBefore = mutableSchedulePayload(database, "family-a", "period-2026-09");
+    const pointersBefore = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id, last_updated_at
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    const preview = service.previewAdministratorRevision(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: "Rollback test",
+      changes: [{ childId: "child-a1", date: "2026-09-01", usageStatus: "off" }],
+    });
+    database.exec(`
+      CREATE TEMP TRIGGER fail_revision_for_test
+      BEFORE INSERT ON operation_logs
+      WHEN NEW.operation = 'family_submission.revised'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced revision failure');
+      END
+    `);
+
+    assert.throws(
+      () => service.createAdministratorRevision(fixture.actorAdmin, {
+        ...preview,
+        changes: [{ childId: "child-a1", date: "2026-09-01", usageStatus: "off" }],
+      }),
+      /forced revision failure/,
+    );
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'").get().count, 2);
+    assert.equal(database.prepare(
+      `SELECT COUNT(*) AS count FROM family_submission_version_children c
+       JOIN family_submission_versions v ON v.id = c.version_id WHERE v.family_id = 'family-a'`,
+    ).get().count, 4);
+    assert.equal(database.prepare(
+      `SELECT COUNT(*) AS count FROM family_submission_version_days d
+       JOIN family_submission_version_children c ON c.id = d.version_child_id
+       JOIN family_submission_versions v ON v.id = c.version_id WHERE v.family_id = 'family-a'`,
+    ).get().count, 120);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'family_submission.revised'").get().count, 0);
+    assert.deepEqual(rawSubmissionVersion(database, confirmed.id), confirmedRaw);
+    assert.deepEqual(mutableSchedulePayload(database, "family-a", "period-2026-09"), mutableBefore);
+    assert.deepEqual({ ...database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id, last_updated_at
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get() }, { ...pointersBefore });
+    assert.equal(submitted.id, pointersBefore.latest_submitted_version_id);
   });
 });
 
