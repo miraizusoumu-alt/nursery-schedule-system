@@ -244,10 +244,13 @@ test("does not choose a target month when active periods are missing or duplicat
     assert.equal(dashboard.available, false);
     assert.equal(dashboard.periodCount, 0);
 
+    // Reproduce an otherwise constrained corruption state only inside this disposable test database.
+    database.exec("DROP INDEX uq_submission_periods_single_parent_target");
     database.prepare("UPDATE submission_periods SET status = 'open' WHERE id = 'period-2026-09'").run();
     database.prepare(
-      `INSERT INTO submission_periods (id, target_month, deadline_at, status, created_at, updated_at)
-       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'open', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      `INSERT INTO submission_periods
+       (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'open', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     ).run();
     dashboard = service.dashboard(fixture.actorA);
     assert.equal(dashboard.available, false);

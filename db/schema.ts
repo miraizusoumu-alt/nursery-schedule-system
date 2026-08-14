@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 
 const timestamps = {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -53,6 +53,10 @@ export const children = sqliteTable(
     childCode: text("child_code").notNull(),
     name: text("name").notNull(),
     kana: text("kana").notNull().default(""),
+    lastName: text("last_name"),
+    firstName: text("first_name"),
+    lastNameKana: text("last_name_kana"),
+    firstNameKana: text("first_name_kana"),
     className: text("class_name").notNull().default(""),
     birthDate: text("birth_date"),
     enrollmentDate: text("enrollment_date"),
@@ -129,6 +133,24 @@ export const basicUsagePatterns = sqliteTable(
   ],
 );
 
+export const basicUsagePatternHistories = sqliteTable(
+  "basic_usage_pattern_histories",
+  {
+    id: text("id").primaryKey(),
+    basicUsagePatternId: text("basic_usage_pattern_id").references(() => basicUsagePatterns.id, { onDelete: "set null" }),
+    childId: text("child_id").notNull().references(() => children.id, { onDelete: "restrict" }),
+    weekday: integer("weekday").notNull(),
+    beforeJson: text("before_json"),
+    afterJson: text("after_json").notNull(),
+    changedByAdministratorId: text("changed_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    changedAt: text("changed_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_basic_usage_pattern_histories_child").on(table.childId, table.changedAt),
+    check("chk_basic_usage_pattern_histories_weekday", sql`${table.weekday} between 1 and 6`),
+  ],
+);
+
 export const submissionPeriods = sqliteTable(
   "submission_periods",
   {
@@ -136,10 +158,12 @@ export const submissionPeriods = sqliteTable(
     targetMonth: text("target_month").notNull(),
     deadlineAt: text("deadline_at").notNull(),
     status: text("status").notNull().default("open"),
+    isParentTarget: integer("is_parent_target", { mode: "boolean" }).notNull().default(true),
     ...timestamps,
   },
   (table) => [
     uniqueIndex("uq_submission_periods_target_month").on(table.targetMonth),
+    uniqueIndex("uq_submission_periods_single_parent_target").on(table.isParentTarget).where(sql`${table.isParentTarget} = 1`),
     check("chk_submission_periods_status", sql`${table.status} in ('draft', 'open', 'closed')`),
   ],
 );
@@ -162,6 +186,24 @@ export const closureDays = sqliteTable(
   ],
 );
 
+export const familyDeadlineExtensions = sqliteTable(
+  "family_deadline_extensions",
+  {
+    id: text("id").primaryKey(),
+    familyId: text("family_id").notNull().references(() => families.id, { onDelete: "restrict" }),
+    submissionPeriodId: text("submission_period_id").notNull().references(() => submissionPeriods.id, { onDelete: "restrict" }),
+    extendedDeadlineAt: text("extended_deadline_at").notNull(),
+    reason: text("reason").notNull(),
+    administratorId: text("administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_family_deadline_extensions_family_period").on(table.familyId, table.submissionPeriodId),
+    index("idx_family_deadline_extensions_period").on(table.submissionPeriodId, table.extendedDeadlineAt),
+    check("chk_family_deadline_extensions_reason", sql`length(trim(${table.reason})) > 0`),
+  ],
+);
+
 export const familySubmissions = sqliteTable(
   "family_submissions",
   {
@@ -170,6 +212,9 @@ export const familySubmissions = sqliteTable(
     submissionPeriodId: text("submission_period_id").notNull().references(() => submissionPeriods.id, { onDelete: "restrict" }),
     status: text("status").notNull().default("draft"),
     submittedAt: text("submitted_at"),
+    latestSubmittedVersionId: text("latest_submitted_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
+    latestConfirmedVersionId: text("latest_confirmed_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
+    latestEffectiveVersionId: text("latest_effective_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
     lastUpdatedAt: text("last_updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -177,6 +222,82 @@ export const familySubmissions = sqliteTable(
     uniqueIndex("uq_family_submissions_family_period").on(table.familyId, table.submissionPeriodId),
     index("idx_family_submissions_period_status").on(table.submissionPeriodId, table.status),
     check("chk_family_submissions_status", sql`${table.status} in ('draft', 'submitted', 'overdue')`),
+  ],
+);
+
+export const familySubmissionVersions = sqliteTable(
+  "family_submission_versions",
+  {
+    id: text("id").primaryKey(),
+    familySubmissionId: text("family_submission_id").notNull().references((): AnySQLiteColumn => familySubmissions.id, { onDelete: "restrict" }),
+    familyId: text("family_id").notNull().references(() => families.id, { onDelete: "restrict" }),
+    submissionPeriodId: text("submission_period_id").notNull().references(() => submissionPeriods.id, { onDelete: "restrict" }),
+    sequenceNumber: integer("sequence_number").notNull(),
+    versionType: text("version_type").notNull().default("parent_submission"),
+    reviewStatus: text("review_status").notNull().default("pending"),
+    sourceVersionId: text("source_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
+    submittedAt: text("submitted_at").notNull(),
+    createdByFamilyAccountId: text("created_by_family_account_id").references(() => familyAccounts.id, { onDelete: "set null" }),
+    createdByAdministratorId: text("created_by_administrator_id").references(() => administrators.id, { onDelete: "set null" }),
+    reasonText: text("reason_text"),
+    changeSummaryJson: text("change_summary_json"),
+    confirmedAt: text("confirmed_at"),
+    confirmedByAdministratorId: text("confirmed_by_administrator_id").references(() => administrators.id, { onDelete: "set null" }),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("uq_family_submission_versions_sequence").on(table.familySubmissionId, table.sequenceNumber),
+    index("idx_family_submission_versions_period_status").on(table.submissionPeriodId, table.reviewStatus, table.submittedAt),
+    index("idx_family_submission_versions_family").on(table.familyId, table.submittedAt),
+    check("chk_family_submission_versions_sequence", sql`${table.sequenceNumber} > 0`),
+    check("chk_family_submission_versions_type", sql`${table.versionType} in ('parent_submission', 'administrator_revision')`),
+    check("chk_family_submission_versions_review_status", sql`${table.reviewStatus} in ('pending', 'confirmed')`),
+  ],
+);
+
+export const familySubmissionVersionChildren = sqliteTable(
+  "family_submission_version_children",
+  {
+    id: text("id").primaryKey(),
+    versionId: text("version_id").notNull().references(() => familySubmissionVersions.id, { onDelete: "cascade" }),
+    childId: text("child_id").notNull().references(() => children.id, { onDelete: "restrict" }),
+    childCodeSnapshot: text("child_code_snapshot").notNull(),
+    nameSnapshot: text("name_snapshot").notNull(),
+    kanaSnapshot: text("kana_snapshot").notNull().default(""),
+    lastNameSnapshot: text("last_name_snapshot"),
+    firstNameSnapshot: text("first_name_snapshot"),
+    lastNameKanaSnapshot: text("last_name_kana_snapshot"),
+    firstNameKanaSnapshot: text("first_name_kana_snapshot"),
+    classNameSnapshot: text("class_name_snapshot").notNull().default(""),
+    birthDateSnapshot: text("birth_date_snapshot"),
+    enrollmentDateSnapshot: text("enrollment_date_snapshot"),
+    withdrawalDateSnapshot: text("withdrawal_date_snapshot"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("uq_family_submission_version_children").on(table.versionId, table.childId),
+    index("idx_family_submission_version_children_child").on(table.childId, table.versionId),
+  ],
+);
+
+export const familySubmissionVersionDays = sqliteTable(
+  "family_submission_version_days",
+  {
+    id: text("id").primaryKey(),
+    versionChildId: text("version_child_id").notNull().references(() => familySubmissionVersionChildren.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    usageStatus: text("usage_status").notNull(),
+    arrivalTime: text("arrival_time"),
+    departureTime: text("departure_time"),
+    source: text("source").notNull(),
+    changed: integer("changed", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("uq_family_submission_version_days_date").on(table.versionChildId, table.date),
+    index("idx_family_submission_version_days_date").on(table.date, table.usageStatus),
+    check("chk_family_submission_version_days_usage_status", sql`${table.usageStatus} in ('using', 'off', 'closed', 'not_enrolled')`),
+    check("chk_family_submission_version_days_source", sql`${table.source} in ('base', 'weekday', 'daily', 'parent', 'admin')`),
   ],
 );
 
