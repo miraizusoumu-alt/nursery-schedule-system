@@ -58,6 +58,12 @@ async function insertFixture(database, currentTime) {
       credential_version, status, created_at, updated_at)
      VALUES ('normal-admin', 'demo-schedule-admin', '架空予定管理者', 'normal', ?, 0, 1, 'active', ?, ?)`,
   ).run(administratorHash, timestamp, timestamp);
+  database.prepare(
+    `INSERT INTO administrators
+     (id, login_id, display_name, role, password_hash, must_change_password,
+      credential_version, status, created_at, updated_at)
+     VALUES ('master-admin', 'demo-schedule-master', '架空マスター管理者', 'master', ?, 0, 1, 'active', ?, ?)`,
+  ).run(administratorHash, timestamp, timestamp);
 
   for (const [id, code, name, className, familyId, sortOrder] of [
     ["child-a1", "DEMO-CHILD-A1", "架空園児A1", "架空組A", "family-a", 1],
@@ -96,6 +102,7 @@ async function insertFixture(database, currentTime) {
     actorA: { type: "family", id: "family-a-account", familyId: "family-a", displayName: "架空家庭A", mustChangePassword: false },
     actorB: { type: "family", id: "family-b-account", familyId: "family-b", displayName: "架空家庭B", mustChangePassword: false },
     actorAdmin: { type: "administrator", id: "normal-admin", role: "normal", displayName: "架空予定管理者", mustChangePassword: false },
+    actorMaster: { type: "administrator", id: "master-admin", role: "master", displayName: "架空マスター管理者", mustChangePassword: false },
   };
 }
 
@@ -127,6 +134,26 @@ function rawSubmissionVersion(database, versionId) {
        WHERE c.version_id = ?
        ORDER BY c.child_id, d.date`,
     ).all(versionId),
+  };
+}
+
+function submissionVersionPayload(database, versionId) {
+  return {
+    children: database.prepare(
+      `SELECT child_id, child_code_snapshot, name_snapshot, kana_snapshot,
+              last_name_snapshot, first_name_snapshot, last_name_kana_snapshot, first_name_kana_snapshot,
+              class_name_snapshot, birth_date_snapshot, enrollment_date_snapshot, withdrawal_date_snapshot
+       FROM family_submission_version_children
+       WHERE version_id = ?
+       ORDER BY child_code_snapshot, child_id`,
+    ).all(versionId).map((row) => ({ ...row })),
+    days: database.prepare(
+      `SELECT c.child_id, d.date, d.usage_status, d.arrival_time, d.departure_time, d.source, d.changed
+       FROM family_submission_version_days d
+       JOIN family_submission_version_children c ON c.id = d.version_child_id
+       WHERE c.version_id = ?
+       ORDER BY c.child_code_snapshot, c.child_id, d.date`,
+    ).all(versionId).map((row) => ({ ...row })),
   };
 }
 
@@ -364,6 +391,213 @@ test("keeps submission versions isolated by family and target month", async () =
         { family_id: "family-b", submission_period_id: "period-2026-09", sequence_number: 1 },
       ],
     );
+  });
+});
+
+test("confirms the latest parent submission immutably and reconfirms only after resubmission", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
+    let dashboard = service.dashboard(fixture.actorA);
+    service.dashboard(fixture.actorB);
+    dashboard = service.submitFamilySchedules(fixture.actorA);
+    const firstSubmitted = service.latestSubmittedVersion(fixture.actorA);
+    const firstSubmittedRaw = rawSubmissionVersion(database, firstSubmitted.id);
+    const firstSubmittedPayload = submissionVersionPayload(database, firstSubmitted.id);
+
+    assert.throws(
+      () => service.confirmLatestFamilySubmission(fixture.actorA, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+      }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    assert.throws(
+      () => service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+        familyId: "family-b",
+        submissionPeriodId: "period-2026-09",
+      }),
+      (error) => error.code === "SUBMITTED_VERSION_REQUIRED",
+    );
+    database.prepare(
+      `INSERT INTO submission_periods
+       (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'draft', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+    assert.throws(
+      () => service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-10",
+      }),
+      (error) => error.code === "PERIOD_NOT_REVIEWABLE",
+    );
+
+    clock.value = new Date("2026-08-21T00:00:00.000Z");
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+    });
+    assert.equal(dashboard.submission.revisionRequired, true);
+    assert.equal(
+      dashboard.children.find((child) => child.id === "child-a1")
+        .schedule.days.find((day) => day.date === "2026-09-02").usageStatus,
+      "off",
+    );
+
+    clock.value = new Date("2026-08-26T00:00:00.000Z");
+    database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-09'").run();
+    const firstConfirmed = service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(firstConfirmed.idempotent, false);
+    assert.equal(firstConfirmed.sequenceNumber, 2);
+    assert.equal(firstConfirmed.versionType, "administrator_revision");
+    assert.equal(firstConfirmed.reviewStatus, "confirmed");
+    assert.equal(firstConfirmed.sourceVersionId, firstSubmitted.id);
+    assert.equal(firstConfirmed.createdByFamilyAccountId, null);
+    assert.equal(firstConfirmed.createdByAdministratorId, fixture.actorAdmin.id);
+    assert.equal(firstConfirmed.confirmedByAdministratorId, fixture.actorAdmin.id);
+    assert.equal(firstConfirmed.confirmedAt, "2026-08-26T00:00:00.000Z");
+    assert.deepEqual(firstConfirmed.changeSummary, {
+      kind: "confirmation",
+      changed: false,
+      sourceVersionId: firstSubmitted.id,
+    });
+    assert.deepEqual(submissionVersionPayload(database, firstConfirmed.id), firstSubmittedPayload);
+    const firstConfirmedRaw = rawSubmissionVersion(database, firstConfirmed.id);
+    assert.equal(
+      firstConfirmed.children.find((child) => child.childId === "child-a1")
+        .days.find((day) => day.date === "2026-09-02").usageStatus,
+      "using",
+    );
+    assert.deepEqual(rawSubmissionVersion(database, firstSubmitted.id), firstSubmittedRaw);
+
+    let pointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    assert.deepEqual({ ...pointers }, {
+      latest_submitted_version_id: firstSubmitted.id,
+      latest_confirmed_version_id: firstConfirmed.id,
+      latest_effective_version_id: firstConfirmed.id,
+    });
+
+    const idempotentConfirmation = service.confirmLatestFamilySubmission(fixture.actorMaster, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(idempotentConfirmation.id, firstConfirmed.id);
+    assert.equal(idempotentConfirmation.idempotent, true);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'").get().count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'family_submission.confirmed'").get().count, 1);
+
+    database.prepare("UPDATE submission_periods SET status = 'open' WHERE id = 'period-2026-09'").run();
+    service.setFamilyDeadlineExtension(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      extendedDeadlineAt: "2026-08-27T14:59:59.000Z",
+      reason: "再提出確認のための延長",
+    });
+    service.submitFamilySchedules(fixture.actorA);
+    const secondSubmitted = service.latestSubmittedVersion(fixture.actorA);
+    const secondSubmittedRaw = rawSubmissionVersion(database, secondSubmitted.id);
+    assert.equal(secondSubmitted.sequenceNumber, 3);
+    assert.equal(secondSubmitted.sourceVersionId, firstSubmitted.id);
+    assert.equal(
+      secondSubmitted.children.find((child) => child.childId === "child-a1")
+        .days.find((day) => day.date === "2026-09-02").usageStatus,
+      "off",
+    );
+    pointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    assert.deepEqual({ ...pointers }, {
+      latest_submitted_version_id: secondSubmitted.id,
+      latest_confirmed_version_id: firstConfirmed.id,
+      latest_effective_version_id: secondSubmitted.id,
+    });
+    const secondConfirmed = service.confirmLatestFamilySubmission(fixture.actorMaster, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(secondConfirmed.sequenceNumber, 4);
+    assert.equal(secondConfirmed.sourceVersionId, secondSubmitted.id);
+    assert.equal(secondConfirmed.createdByAdministratorId, fixture.actorMaster.id);
+    assert.deepEqual(submissionVersionPayload(database, secondConfirmed.id), submissionVersionPayload(database, secondSubmitted.id));
+    pointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    assert.deepEqual({ ...pointers }, {
+      latest_submitted_version_id: secondSubmitted.id,
+      latest_confirmed_version_id: secondConfirmed.id,
+      latest_effective_version_id: secondConfirmed.id,
+    });
+    assert.deepEqual(rawSubmissionVersion(database, firstSubmitted.id), firstSubmittedRaw);
+    assert.deepEqual(rawSubmissionVersion(database, firstConfirmed.id), firstConfirmedRaw);
+    assert.deepEqual(rawSubmissionVersion(database, secondSubmitted.id), secondSubmittedRaw);
+
+    const confirmationLogs = database.prepare(
+      `SELECT actor_type, actor_id, target_type, target_id, target_month, detail_json
+       FROM operation_logs
+       WHERE operation = 'family_submission.confirmed'
+       ORDER BY occurred_at, rowid`,
+    ).all();
+    assert.equal(confirmationLogs.length, 2);
+    assert.deepEqual(confirmationLogs.map((row) => [row.actor_type, row.actor_id]), [
+      ["administrator", fixture.actorAdmin.id],
+      ["administrator", fixture.actorMaster.id],
+    ]);
+    assert.equal(confirmationLogs[0].target_type, "family_submission");
+    assert.equal(confirmationLogs[0].target_id, firstSubmitted.familySubmissionId);
+    assert.equal(confirmationLogs[0].target_month, "2026-09");
+    assert.deepEqual(JSON.parse(confirmationLogs[0].detail_json), {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      sourceVersionId: firstSubmitted.id,
+      confirmedVersionId: firstConfirmed.id,
+      sequenceNumber: 2,
+      childCount: 2,
+      dayCount: 60,
+    });
+  });
+});
+
+test("rolls back the complete administrator confirmation when final audit logging fails", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    service.dashboard(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorA);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const submittedRaw = rawSubmissionVersion(database, submitted.id);
+    database.exec(`
+      CREATE TEMP TRIGGER fail_confirmation_for_test
+      BEFORE INSERT ON operation_logs
+      WHEN NEW.operation = 'family_submission.confirmed'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced confirmation failure');
+      END
+    `);
+
+    assert.throws(
+      () => service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+      }),
+      /forced confirmation failure/,
+    );
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_versions").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_version_children").get().count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_submission_version_days").get().count, 60);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'family_submission.confirmed'").get().count, 0);
+    assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
+    const pointers = database.prepare(
+      `SELECT latest_submitted_version_id, latest_confirmed_version_id, latest_effective_version_id
+       FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'`,
+    ).get();
+    assert.deepEqual({ ...pointers }, {
+      latest_submitted_version_id: submitted.id,
+      latest_confirmed_version_id: null,
+      latest_effective_version_id: submitted.id,
+    });
   });
 });
 
