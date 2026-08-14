@@ -1684,3 +1684,178 @@ h2 {
     grid-template-columns: 1fr;
   }
 }
+
+.admin-schedule-view {
+  min-width: 0;
+}
+
+.admin-schedule-nav,
+.admin-schedule-form-row,
+.admin-version-summary {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-schedule-nav {
+  align-items: center;
+}
+
+.admin-schedule-nav a {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.admin-schedule-form-row > label,
+.auth-section-heading > label {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 210px);
+}
+
+.admin-schedule-form-row > label > span,
+.auth-section-heading > label > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-schedule-grow {
+  flex: 1 1 320px;
+}
+
+.admin-schedule-note {
+  margin: 0 0 14px;
+  color: var(--muted);
+}
+
+.admin-family-select {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 800;
+  text-align: left;
+}
+
+.auth-table tr.selected {
+  background: #eef8f4;
+}
+
+.admin-state {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 1px solid #cbd5d1;
+  border-radius: 6px;
+  background: #f6f8f7;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.admin-state.submitted {
+  border-color: #86b6d9;
+  background: #edf6fc;
+  color: #15517b;
+}
+
+.admin-state.confirmed {
+  border-color: #7ab79f;
+  background: #eef8f4;
+  color: #185f49;
+}
+
+.admin-state.school_revised {
+  border-color: #c89c54;
+  background: #fff8e8;
+  color: #72500d;
+}
+
+.admin-version-summary {
+  align-items: center;
+  padding: 12px 0;
+}
+
+.admin-version-summary span {
+  color: var(--muted);
+}
+
+.admin-revision-children,
+.admin-history-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.admin-revision-children details,
+.admin-history-list details {
+  border-block: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.admin-revision-children summary,
+.admin-history-list summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.admin-revision-children summary span,
+.admin-history-list summary span,
+.admin-history-list details > p {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.admin-day-table input,
+.admin-day-table select {
+  min-width: 108px;
+}
+
+.admin-preview {
+  margin-top: 16px;
+  padding: 14px;
+  border-left: 4px solid #2c7a62;
+  background: #f2f8f5;
+}
+
+.admin-preview h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.admin-preview > div,
+.admin-history-list details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid #d6e4dd;
+}
+
+.admin-preview > button {
+  margin-top: 12px;
+}
+
+@media (max-width: 719px) {
+  .admin-schedule-nav,
+  .admin-schedule-form-row,
+  .admin-version-summary,
+  .admin-preview > div,
+  .admin-history-list details > div,
+  .admin-revision-children summary,
+  .admin-history-list summary {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .admin-schedule-form-row > label,
+  .admin-schedule-form-row > button,
+  .auth-section-heading > label {
+    width: 100%;
+  }
+}

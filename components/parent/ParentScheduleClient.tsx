@@ -52,6 +52,10 @@ type AvailableDashboard = {
     id: string;
     targetMonth: string;
     deadlineAt: string;
+    globalDeadlineAt: string | null;
+    effectiveDeadlineAt: string | null;
+    deadlineSource: "submission_period" | "family_extension";
+    extensionActive: boolean;
     status: "open" | "closed";
     editable: boolean;
     lockMessage: string | null;
@@ -63,6 +67,8 @@ type AvailableDashboard = {
     submittedAt: string | null;
     lastUpdatedAt: string;
     revisionRequired: boolean;
+    schoolModified: boolean;
+    schoolModifiedAt: string | null;
   };
   children: ScheduleChild[];
   history: HistoryEntry[];
@@ -451,9 +457,15 @@ export function ParentScheduleClient() {
           <span>自動保存</span>
           <strong className={`parent-save-state ${saveState}`}>{saveLabel}</strong>
         </div>
+        <div>
+          <span>{data.period.deadlineSource === "family_extension" ? "延長後の提出期限" : "提出期限"}</span>
+          <strong>{formatDateTime(data.period.effectiveDeadlineAt ?? data.period.deadlineAt)}</strong>
+        </div>
       </section>
 
       {readonly ? <p className="auth-message info">{data.period.lockMessage}</p> : null}
+      {data.period.extensionActive ? <p className="auth-message info">園から提出期限が延長されています。延長後の期限まで編集・再提出できます。</p> : null}
+      {data.submission.schoolModified ? <p className="auth-message info">提出後、園で予定を変更しています。詳しくは園へお問い合わせください。</p> : null}
       {message ? <p className={`auth-message ${saveState === "failed" ? "error" : "info"}`} role={saveState === "failed" ? "alert" : "status"}>{message}</p> : null}
 
       <nav className="child-switcher" aria-label="園児切替">

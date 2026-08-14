@@ -4,6 +4,7 @@ import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
 import { createAuthService } from "../lib/server/auth/service.mjs";
 import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
 import { authorizeProtectedPage, handleAuthApiRequest } from "./auth-http.mjs";
+import { handleAdminScheduleApiRequest } from "./admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "./family-schedule-http.mjs";
 
 const MAX_AUTH_BODY_BYTES = 1024 * 1024;
@@ -119,6 +120,8 @@ export async function createGateway({
       const isApi = incoming.url?.startsWith("/api/") === true;
       if (isApi) {
         const request = await toFetchRequest(incoming, publicPort, true);
+        const adminScheduleResponse = await handleAdminScheduleApiRequest(request, { service: familyScheduleService, authService: service });
+        if (adminScheduleResponse) return await sendFetchResponse(adminScheduleResponse, outgoing);
         const familyScheduleResponse = await handleFamilyScheduleApiRequest(request, { service: familyScheduleService, authService: service });
         if (familyScheduleResponse) return await sendFetchResponse(familyScheduleResponse, outgoing);
         const response = await handleAuthApiRequest(request, { service, runtimeSecureCookies });

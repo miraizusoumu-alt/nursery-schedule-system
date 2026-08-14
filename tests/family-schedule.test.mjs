@@ -7,6 +7,7 @@ import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
 import { createAuthService } from "../lib/server/auth/service.mjs";
 import { generateTemporaryPassword, hashPassword } from "../lib/server/auth/security.mjs";
 import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
+import { handleAdminScheduleApiRequest } from "../server/admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "../server/family-schedule-http.mjs";
 
 async function withScheduleDatabase(run, initialTime = new Date("2026-08-20T00:00:00.000Z")) {
@@ -119,6 +120,29 @@ async function familySession(authService, loginId, password) {
     cookie: `nursery_session=${result.session.token}; nursery_csrf=${result.session.csrfToken}`,
     csrfToken: result.session.csrfToken,
   };
+}
+
+async function administratorSession(authService, loginId, password) {
+  const result = await authService.login({ scope: "administrator", loginId, password, source: "test" });
+  return {
+    actor: result.actor,
+    cookie: `nursery_session=${result.session.token}; nursery_csrf=${result.session.csrfToken}`,
+    csrfToken: result.session.csrfToken,
+  };
+}
+
+function apiRequest(path, session, { method = "GET", body, csrf = true } = {}) {
+  const headers = new Headers({ cookie: session.cookie });
+  if (body !== undefined) headers.set("content-type", "application/json");
+  if (method !== "GET" && method !== "HEAD") {
+    headers.set("origin", "http://localhost");
+    if (csrf) headers.set("x-csrf-token", session.csrfToken);
+  }
+  return new Request(`http://localhost${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 }
 
 function rawSubmissionVersion(database, versionId) {
@@ -1382,5 +1406,203 @@ test("does not choose a parent target when it is unavailable or duplicated", asy
     dashboard = service.dashboard(fixture.actorA);
     assert.equal(dashboard.available, false);
     assert.equal(dashboard.periodCount, 2);
+  });
+});
+
+test("connects administrator schedule APIs without exposing them to family sessions", async () => {
+  await withScheduleDatabase(async ({ database, service, authService, fixture }) => {
+    service.dashboard(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorA);
+    const family = await familySession(authService, "demo-family-a", fixture.passwords.familyA);
+    const administrator = await administratorSession(authService, "demo-schedule-admin", fixture.passwords.administrator);
+
+    const forbidden = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules", family),
+      { service, authService },
+    );
+    assert.equal(forbidden.status, 403);
+    assert.equal((await forbidden.json()).code, "FORBIDDEN");
+
+    const missingCsrf = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/confirm", administrator, {
+        method: "POST",
+        csrf: false,
+        body: { familyId: "family-a", submissionPeriodId: "period-2026-09" },
+      }),
+      { service, authService },
+    );
+    assert.equal(missingCsrf.status, 403);
+    assert.equal((await missingCsrf.json()).code, "CSRF_INVALID");
+
+    const dashboardResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules?submissionPeriodId=period-2026-09&familyId=family-a", administrator),
+      { service, authService },
+    );
+    assert.equal(dashboardResponse.status, 200);
+    const adminDashboard = (await dashboardResponse.json()).dashboard;
+    assert.equal(adminDashboard.selectedFamily.id, "family-a");
+    assert.equal(adminDashboard.selectedFamily.submissionState, "submitted");
+    assert.equal(adminDashboard.latestSubmittedVersion.children.length, 2);
+    assert.ok(!JSON.stringify(adminDashboard).toLowerCase().includes("password"));
+    assert.ok(!JSON.stringify(adminDashboard).toLowerCase().includes("birthdate"));
+    assert.ok(!JSON.stringify(adminDashboard).toLowerCase().includes("kana"));
+
+    const extensionResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/deadline-extension", administrator, {
+        method: "PUT",
+        body: {
+          familyId: "family-a",
+          submissionPeriodId: "period-2026-09",
+          extendedDeadlineAt: "2026-08-30T14:59:59.000Z",
+          reason: "架空の手動確認用延長",
+        },
+      }),
+      { service, authService },
+    );
+    assert.equal(extensionResponse.status, 200);
+    const parentWithExtension = service.dashboard(fixture.actorA);
+    assert.equal(parentWithExtension.period.extensionActive, true);
+    assert.equal(parentWithExtension.period.deadlineSource, "family_extension");
+
+    const confirmResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/confirm", administrator, {
+        method: "POST",
+        body: { familyId: "family-a", submissionPeriodId: "period-2026-09" },
+      }),
+      { service, authService },
+    );
+    assert.equal(confirmResponse.status, 200);
+    const confirmed = (await confirmResponse.json()).result;
+    assert.equal(confirmed.changeSummary.kind, "confirmation");
+    assert.equal(service.dashboard(fixture.actorA).submission.schoolModified, false);
+
+    const changes = [{ childId: "child-a1", date: "2026-09-01", usageStatus: "off", arrivalTime: null, departureTime: null }];
+    const previewResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/revision/preview", administrator, {
+        method: "POST",
+        body: { familyId: "family-a", submissionPeriodId: "period-2026-09", reason: "架空の変更連絡", changes },
+      }),
+      { service, authService },
+    );
+    assert.equal(previewResponse.status, 200);
+    const preview = (await previewResponse.json()).result;
+    assert.equal(preview.changedDateCount, 1);
+    assert.equal(preview.changes[0].childId, "child-a1");
+
+    const revisionResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/revision", administrator, {
+        method: "POST",
+        body: {
+          familyId: "family-a",
+          submissionPeriodId: "period-2026-09",
+          sourceVersionId: preview.sourceVersionId,
+          reason: preview.reason,
+          changes,
+        },
+      }),
+      { service, authService },
+    );
+    assert.equal(revisionResponse.status, 200);
+    const revision = (await revisionResponse.json()).result;
+    assert.deepEqual(revision.changeSummary.changes, preview.changes);
+    assert.equal(service.dashboard(fixture.actorA).submission.schoolModified, true);
+
+    const repeatConfirmResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/confirm", administrator, {
+        method: "POST",
+        body: { familyId: "family-a", submissionPeriodId: "period-2026-09" },
+      }),
+      { service, authService },
+    );
+    assert.equal(repeatConfirmResponse.status, 200);
+    const repeatConfirmation = (await repeatConfirmResponse.json()).result;
+    assert.equal(repeatConfirmation.id, revision.id);
+    assert.equal(repeatConfirmation.idempotent, true);
+    assert.equal(
+      database.prepare("SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a'").get().count,
+      3,
+    );
+
+    const staleResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/revision", administrator, {
+        method: "POST",
+        body: {
+          familyId: "family-a",
+          submissionPeriodId: "period-2026-09",
+          sourceVersionId: preview.sourceVersionId,
+          reason: "古い版からの保存",
+          changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "off" }],
+        },
+      }),
+      { service, authService },
+    );
+    assert.equal(staleResponse.status, 409);
+    assert.equal((await staleResponse.json()).code, "EFFECTIVE_VERSION_CHANGED");
+
+    const historyResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/history?submissionPeriodId=period-2026-09&familyId=family-a&childId=child-a1", administrator),
+      { service, authService },
+    );
+    assert.equal(historyResponse.status, 200);
+    const history = (await historyResponse.json()).history;
+    assert.equal(history.length, 1);
+    assert.equal(history[0].reason, "架空の変更連絡");
+    assert.equal(history[0].changes.length, 1);
+    assert.equal(history[0].administratorName, "架空予定管理者");
+
+    const unrelatedHistory = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/history?submissionPeriodId=period-2026-09&familyId=family-b", administrator),
+      { service, authService },
+    );
+    assert.deepEqual((await unrelatedHistory.json()).history, []);
+
+    const crossFamilyPreview = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/revision/preview", administrator, {
+        method: "POST",
+        body: {
+          familyId: "family-a",
+          submissionPeriodId: "period-2026-09",
+          reason: "別家庭園児を指定",
+          changes: [{ childId: "child-b1", date: "2026-09-01", usageStatus: "off" }],
+        },
+      }),
+      { service, authService },
+    );
+    assert.equal(crossFamilyPreview.status, 403);
+    assert.equal((await crossFamilyPreview.json()).code, "CHILD_SCOPE_VIOLATION");
+
+    service.submitFamilySchedules(fixture.actorA);
+    assert.equal(service.dashboard(fixture.actorA).submission.schoolModified, false);
+    const versionCount = database.prepare(
+      "SELECT COUNT(*) AS count FROM family_submission_versions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'",
+    ).get().count;
+    assert.equal(versionCount, 4);
+  });
+});
+
+test("switches the parent target through the administrator API in one transaction", async () => {
+  await withScheduleDatabase(async ({ database, service, authService, fixture }) => {
+    database.prepare(
+      `INSERT INTO submission_periods
+       (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'open', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ).run();
+    const administrator = await administratorSession(authService, "demo-schedule-admin", fixture.passwords.administrator);
+    const response = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/parent-target", administrator, {
+        method: "POST",
+        body: { submissionPeriodId: "period-2026-10" },
+      }),
+      { service, authService },
+    );
+    assert.equal(response.status, 200);
+    const rows = database.prepare(
+      "SELECT id, is_parent_target FROM submission_periods ORDER BY id",
+    ).all().map((row) => ({ ...row }));
+    assert.deepEqual(rows, [
+      { id: "period-2026-09", is_parent_target: 0 },
+      { id: "period-2026-10", is_parent_target: 1 },
+    ]);
+    assert.equal(service.dashboard(fixture.actorA).period.id, "period-2026-10");
   });
 });

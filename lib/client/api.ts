@@ -5,6 +5,18 @@ export function csrfToken() {
   return entry ? decodeURIComponent(entry.slice("nursery_csrf=".length)) : "";
 }
 
+export class ApiError extends Error {
+  code: string;
+  status: number;
+
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 export async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers = new Headers({ accept: "application/json" });
@@ -16,7 +28,7 @@ export async function api<T>(path: string, options: { method?: string; body?: un
     credentials: "same-origin",
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  const result = await response.json() as T & { message?: string };
-  if (!response.ok) throw new Error(result.message ?? "処理を完了できませんでした。");
+  const result = await response.json() as T & { code?: string; message?: string };
+  if (!response.ok) throw new ApiError(result.code ?? "REQUEST_FAILED", result.message ?? "処理を完了できませんでした。", response.status);
   return result;
 }

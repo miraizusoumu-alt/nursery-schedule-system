@@ -268,7 +268,7 @@ export function authorizeProtectedPage(request, service) {
   const url = new URL(request.url);
   const isParentPage = url.pathname === "/parent/account";
   const isParentSchedulePage = url.pathname === "/parent/schedule";
-  const isAdministratorPage = url.pathname === "/admin/accounts";
+  const isAdministratorPage = url.pathname === "/admin/accounts" || url.pathname === "/admin/schedules";
   const isPasswordPage = url.pathname === "/account/password";
   const isPrototypeTop = url.pathname === "/";
   if (!isParentPage && !isParentSchedulePage && !isAdministratorPage && !isPasswordPage && !isPrototypeTop) return null;

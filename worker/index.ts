@@ -18,6 +18,7 @@ const GATEWAY_SECRET_HEADER = "x-nursery-gateway-secret";
 const GATEWAY_PROTECTED_PATHS = new Set([
   "/account/password",
   "/admin/accounts",
+  "/admin/schedules",
   "/parent/account",
   "/parent/schedule",
 ]);

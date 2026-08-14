@@ -399,7 +399,7 @@ export function AdminAccountsView() {
   const isMaster = actor.role === "master";
   return (
     <div className="auth-stack">
-      <section className="auth-section auth-toolbar"><div><span>ログイン中</span><strong>{actor.displayName}（{isMaster ? "マスター管理者" : "通常管理者"}）</strong></div><LogoutButton /></section>
+      <section className="auth-section auth-toolbar"><div><span>ログイン中</span><strong>{actor.displayName}（{isMaster ? "マスター管理者" : "通常管理者"}）</strong></div><div className="admin-schedule-nav"><a href="/admin/schedules">利用予定管理</a><LogoutButton /></div></section>
       {credential ? <CredentialNotice credential={credential} onDismiss={() => setCredential(null)} /> : null}
       {message ? <p className="auth-message info" role="status">{message}</p> : null}
 

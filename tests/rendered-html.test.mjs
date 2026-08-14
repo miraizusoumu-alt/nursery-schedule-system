@@ -161,6 +161,8 @@ test("adds the protected database-backed parent schedule screen without changing
   assert.match(parentClient, /修正後は再提出が必要です/);
   assert.match(parentClient, /入力内容は画面に残しています/);
   assert.match(parentClient, /parent-fixed-actions|child-switcher/);
+  assert.match(parentClient, /園から提出期限が延長されています/);
+  assert.match(parentClient, /提出後、園で予定を変更しています/);
   assert.match(familyService, /CHILD_SCOPE_VIOLATION/);
   assert.match(familyService, /BEGIN IMMEDIATE/);
   assert.match(familyService, /Asia\/Tokyo|TOKYO_OFFSET_MINUTES/);
@@ -168,6 +170,31 @@ test("adds the protected database-backed parent schedule screen without changing
   assert.match(css, /parent-fixed-actions/);
   assert.match(css, /overflow-x:\s*hidden/);
   assert.match(css, /@media \(max-width:\s*719px\)/);
+});
+
+test("connects protected administrator schedule operations without changing the prototype", async () => {
+  const [page, adminPage, adminClient, adminHttp, gateway, authHttp, worker, familyService] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/schedules/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminScheduleClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../server/admin-schedule-http.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/auth-http.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/server/family-schedule/service.mjs", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /loadPrototypeStore/);
+  assert.match(adminPage, /AdminScheduleClient/);
+  assert.match(adminClient, /保護者向け対象月|家庭別期限延長|最新提出内容の確認|保存前の確認|変更履歴/);
+  assert.match(adminClient, /EFFECTIVE_VERSION_CHANGED|NO_CHANGES/);
+  assert.match(adminHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
+  assert.match(adminHttp, /assertCsrf/);
+  assert.match(gateway, /handleAdminScheduleApiRequest/);
+  assert.match(authHttp, /\/admin\/schedules/);
+  assert.match(worker, /\/admin\/schedules/);
+  assert.match(familyService, /administratorScheduleDashboard|administratorRevisionHistory/);
+  assert.match(familyService, /changeSummary\?\.kind === "administrator_revision"/);
 });
 
 test("supports password managers, visibility controls, and the eight-character policy", async () => {
