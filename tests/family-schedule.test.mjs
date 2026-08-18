@@ -3,10 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import ExcelJS from "exceljs";
 import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
 import { createAuthService } from "../lib/server/auth/service.mjs";
 import { generateTemporaryPassword, hashPassword } from "../lib/server/auth/security.mjs";
 import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
+import { createFamilyScheduleExcel, headcountAlertLevel } from "../lib/server/family-schedule/excel-export.mjs";
 import { handleAdminScheduleApiRequest } from "../server/admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "../server/family-schedule-http.mjs";
 
@@ -1847,5 +1849,239 @@ test("switches the parent target through the administrator API in one transactio
       { id: "period-2026-10", is_parent_target: 1 },
     ]);
     assert.equal(service.dashboard(fixture.actorA).period.id, "period-2026-10");
+  });
+});
+
+test("exports the latest effective schedules as a valid two-sheet workbook", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    let dashboard = service.dashboard(fixture.actorA);
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboard, "child-a1", "2026-09-01", {
+        usageStatus: "using",
+        arrivalTime: "09:00",
+        departureTime: "16:00",
+      }),
+    });
+    service.updateChildSchedule(fixture.actorA, "child-a2", {
+      days: daysWithPatch(dashboard, "child-a2", "2026-09-01", {
+        usageStatus: "off",
+        arrivalTime: null,
+        departureTime: null,
+      }),
+    });
+    service.submitFamilySchedules(fixture.actorA);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    assert.equal(
+      submitted.children.find((child) => child.childId === "child-a1").days.find((day) => day.date === "2026-09-02").usageStatus,
+      "using",
+    );
+    service.confirmLatestFamilySubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    const preview = service.previewAdministratorRevision(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: "Excel export fixture revision",
+      changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "off" }],
+    });
+    service.createAdministratorRevision(fixture.actorAdmin, {
+      sourceVersionId: preview.sourceVersionId,
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: preview.reason,
+      changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "off" }],
+    });
+
+    database.prepare(
+      "UPDATE children SET enrollment_date = '2026-09-10', withdrawal_date = '2026-09-20' WHERE id = 'child-a2'",
+    ).run();
+    database.prepare(
+      "UPDATE family_children SET active_from = '2026-09-10', active_to = '2026-09-20' WHERE family_id = 'family-a' AND child_id = 'child-a2'",
+    ).run();
+    database.prepare("UPDATE children SET name = '=2+2' WHERE id = 'child-b1'").run();
+
+    const data = service.administratorScheduleExportData(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(data.dates.length, 30);
+    assert.equal(data.dates[0].weekday, 2);
+    assert.equal(data.children.length, 3);
+    const childA1 = data.children.find((child) => child.name.includes("A1"));
+    const childA2 = data.children.find((child) => child.name.includes("A2"));
+    const childB1 = data.children.find((child) => child.name === "=2+2");
+    assert.equal(childA1.submissionStatus, "submitted");
+    assert.equal(childA1.days[0].arrivalTime, "09:00");
+    assert.equal(childA1.days[0].departureTime, "16:00");
+    assert.equal(childA1.days[1].usageStatus, "off");
+    assert.equal(childA2.days[8].usageStatus, "not_enrolled");
+    assert.equal(childA2.days[9].usageStatus, "using");
+    assert.equal(childA2.days[20].usageStatus, "not_enrolled");
+    assert.equal(childB1.submissionStatus, "unsubmitted");
+    assert.equal(childA1.days[5].usageStatus, "closed");
+    assert.equal(childA1.days[20].usageStatus, "closed");
+
+    const excel = await createFamilyScheduleExcel(data);
+    assert.equal(excel.filename, "nursery-schedule-2026-09.xlsx");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(excel.buffer);
+    assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["園児利用予定", "時間帯別人数"]);
+
+    const monthly = workbook.getWorksheet("園児利用予定");
+    const headcount = workbook.getWorksheet("時間帯別人数");
+    assert.equal(monthly.views[0].state, "frozen");
+    assert.equal(monthly.views[0].xSplit, 2);
+    assert.equal(monthly.views[0].ySplit, 2);
+    assert.equal(headcount.views[0].state, "frozen");
+    assert.equal(headcount.views[0].xSplit, 1);
+    assert.equal(headcount.views[0].ySplit, 2);
+    assert.equal(monthly.pageSetup.orientation, "landscape");
+
+    const dangerousNameCell = [...Array(monthly.rowCount)].map((_, index) => monthly.getCell(index + 1, 1))
+      .find((cell) => cell.value === "'=2+2");
+    assert.ok(dangerousNameCell);
+    assert.equal(typeof dangerousNameCell.value, "string");
+    monthly.eachRow((row) => row.eachCell((cell) => {
+      assert.ok(!(cell.value && typeof cell.value === "object" && "formula" in cell.value));
+    }));
+
+    const childA1Row = [...Array(monthly.rowCount)].map((_, index) => monthly.getRow(index + 1))
+      .find((row) => String(row.getCell(1).value).includes("A1"));
+    assert.equal(childA1Row.getCell(3).value, "9:00〜16:00");
+    assert.equal(childA1Row.getCell(4).value, "休み");
+    assert.equal(monthly.getRow(data.children.length + 3).getCell(3).value, 1);
+    assert.equal(monthly.getCell(2, 7).fill.fgColor.argb, "FFDCEBFA");
+    assert.equal(monthly.getCell(2, 8).fill.fgColor.argb, "FFFDE2E2");
+    assert.equal(monthly.getCell(2, 23).fill.fgColor.argb, "FFFDE2E2");
+
+    const row1600 = 3 + ((16 * 60 - 7 * 60) / 5);
+    const row1605 = row1600 + 1;
+    assert.equal(headcount.getCell(row1600, 2).value, 1);
+    assert.equal(headcount.getCell(row1605, 2).value, 0);
+    assert.equal(headcount.getCell(3, 7).value, 0);
+    assert.equal(headcount.getCell(3, 22).value, 0);
+
+    const exportedValues = [];
+    workbook.eachSheet((sheet) => sheet.eachRow((row) => row.eachCell((cell) => exportedValues.push(String(cell.value ?? "")))));
+    const exportedText = exportedValues.join("\n");
+    for (const forbidden of [
+      fixture.passwords.familyA,
+      fixture.passwords.administrator,
+      "child-a1",
+      "family-a",
+      "2025-",
+      "Excel export fixture revision",
+    ]) assert.ok(!exportedText.includes(forbidden));
+
+    assert.throws(
+      () => service.administratorScheduleExportData(fixture.actorA, { submissionPeriodId: "period-2026-09" }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    assert.throws(
+      () => service.administratorScheduleExportData(fixture.actorAdmin, { submissionPeriodId: "missing-period" }),
+      (error) => error.code === "NOT_FOUND",
+    );
+  });
+});
+
+test("colors morning and afternoon headcounts at the specified boundaries", async () => {
+  for (const [slot, count, expected] of [
+    [7 * 60, 6, "normal"],
+    [7 * 60, 7, "warning"],
+    [11 * 60 + 55, 9, "warning"],
+    [11 * 60 + 55, 10, "strong"],
+    [12 * 60, 10, "strong"],
+    [12 * 60, 5, "normal"],
+    [12 * 60, 6, "warning"],
+    [12 * 60, 8, "warning"],
+    [12 * 60, 9, "strong"],
+    [20 * 60, 9, "strong"],
+  ]) assert.equal(headcountAlertLevel(slot, count), expected, `${slot} minutes / ${count} children`);
+  assert.equal(headcountAlertLevel(11 * 60 + 55, 6), "normal");
+  assert.equal(headcountAlertLevel(12 * 60, 6), "warning");
+
+  const dates = [
+    { date: "2026-09-01", dayOfMonth: 1, weekday: 2, isSaturday: false, isClosure: false },
+    { date: "2026-09-02", dayOfMonth: 2, weekday: 3, isSaturday: false, isClosure: false },
+  ];
+  const child = (index, arrivalTime, departureTime, dateIndex) => ({
+    name: `架空園児${index}`,
+    submissionStatus: "submitted",
+    days: dates.map((date, currentDateIndex) => ({
+      date: date.date,
+      usageStatus: currentDateIndex === dateIndex ? "using" : "off",
+      arrivalTime: currentDateIndex === dateIndex ? arrivalTime : null,
+      departureTime: currentDateIndex === dateIndex ? departureTime : null,
+    })),
+  });
+  const children = [
+    ...Array.from({ length: 6 }, (_, index) => child(index + 1, "07:00", "12:00", 0)),
+    ...Array.from({ length: 4 }, (_, index) => child(index + 7, "07:00", "11:50", 0)),
+    ...Array.from({ length: 9 }, (_, index) => child(index + 11, "12:00", "20:00", 1)),
+  ];
+  const excel = await createFamilyScheduleExcel({
+    period: { id: "period-color-test", targetMonth: "2026-09", status: "open" },
+    dates,
+    children,
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(excel.buffer);
+  const headcount = workbook.getWorksheet("時間帯別人数");
+  const rowFor = (time) => {
+    const [hour, minute] = time.split(":").map(Number);
+    return 3 + ((hour * 60 + minute - 7 * 60) / 5);
+  };
+
+  assert.equal(headcount.getCell(rowFor("07:00"), 2).value, 10);
+  assert.equal(headcount.getCell(rowFor("07:00"), 2).fill.fgColor.argb, "FFFFC857");
+  assert.equal(headcount.getCell(rowFor("11:55"), 2).value, 6);
+  assert.notEqual(headcount.getCell(rowFor("11:55"), 2).fill.fgColor?.argb, "FFFFF1B8");
+  assert.notEqual(headcount.getCell(rowFor("11:55"), 2).fill.fgColor?.argb, "FFFFC857");
+  assert.equal(headcount.getCell(rowFor("12:00"), 2).value, 6);
+  assert.equal(headcount.getCell(rowFor("12:00"), 2).fill.fgColor.argb, "FFFFF1B8");
+  assert.equal(headcount.getCell(rowFor("12:00"), 3).value, 9);
+  assert.equal(headcount.getCell(rowFor("12:00"), 3).fill.fgColor.argb, "FFFFC857");
+  assert.equal(headcount.getCell(rowFor("20:00"), 3).value, 9);
+  assert.equal(headcount.getCell(rowFor("20:00"), 3).fill.fgColor.argb, "FFFFC857");
+});
+
+test("serves Excel downloads only to authenticated administrators", async () => {
+  await withScheduleDatabase(async ({ service, authService, fixture }) => {
+    service.dashboard(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorA);
+    const family = await familySession(authService, "demo-family-a", fixture.passwords.familyA);
+    const administrator = await administratorSession(authService, "demo-schedule-admin", fixture.passwords.administrator);
+
+    const unauthenticated = await handleAdminScheduleApiRequest(
+      new Request("http://localhost/api/admin/schedules/export?submissionPeriodId=period-2026-09"),
+      { service, authService },
+    );
+    assert.equal(unauthenticated.status, 401);
+
+    const forbidden = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/export?submissionPeriodId=period-2026-09", family),
+      { service, authService },
+    );
+    assert.equal(forbidden.status, 403);
+
+    const missing = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/export?submissionPeriodId=missing-period", administrator),
+      { service, authService },
+    );
+    assert.equal(missing.status, 404);
+
+    const response = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/export?submissionPeriodId=period-2026-09", administrator),
+      { service, authService },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(
+      response.headers.get("content-type"),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    assert.match(response.headers.get("content-disposition"), /nursery-schedule-2026-09\.xlsx/);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()));
+    assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["園児利用予定", "時間帯別人数"]);
   });
 });

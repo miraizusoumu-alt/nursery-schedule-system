@@ -222,6 +222,38 @@ export function AdminScheduleClient() {
     }
   }
 
+  async function downloadExcel(period: Period) {
+    await run("excel", async () => {
+      const query = new URLSearchParams({ submissionPeriodId: period.id });
+      const response = await fetch(`/api/admin/schedules/export?${query}`, {
+        method: "GET",
+        headers: { accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => null) as { code?: string; message?: string } | null;
+        throw new ApiError(
+          result?.code ?? "EXCEL_EXPORT_FAILED",
+          result?.message ?? "Excelファイルを作成できませんでした。時間をおいて再度お試しください。",
+          response.status,
+        );
+      }
+      const blob = await response.blob();
+      const fallback = `nursery-schedule-${period.targetMonth}.xlsx`;
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? fallback;
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+      setMessage(`${formatMonth(period.targetMonth)}のExcelをダウンロードしました。`);
+    });
+  }
+
   function updateEdit(childId: string, day: VersionDay, patch: Partial<DayEdit>) {
     if (day.usageStatus === "closed" || day.usageStatus === "not_enrolled") return;
     const key = `${childId}:${day.date}`;
@@ -271,6 +303,9 @@ export function AdminScheduleClient() {
         <div className="admin-schedule-form-row">
           <label><span>確認する期間</span><select value={selectedPeriod?.id ?? ""} onChange={(event) => void run("period", async () => reload(event.currentTarget.value, ""))}>{dashboard.periods.map((period) => <option key={period.id} value={period.id}>{formatMonth(period.targetMonth)} / {period.status}{period.isParentTarget ? " / 現在の対象月" : ""}</option>)}</select></label>
           <label><span>新しい保護者向け対象月</span><select value={targetPeriodId} onChange={(event) => setTargetPeriodId(event.currentTarget.value)}>{dashboard.periods.map((period) => <option key={period.id} value={period.id}>{formatMonth(period.targetMonth)} / {period.status}</option>)}</select></label>
+          <button type="button" disabled={busy !== "" || !selectedPeriod} onClick={() => {
+            if (selectedPeriod) void downloadExcel(selectedPeriod);
+          }}>{selectedPeriod ? `${formatMonth(selectedPeriod.targetMonth)}のExcelを出力` : "Excelを出力"}</button>
           <button type="button" disabled={busy !== "" || !targetPeriodId} onClick={() => {
             const target = dashboard.periods.find((period) => period.id === targetPeriodId);
             if (!target || !window.confirm(`保護者向け対象月を${formatMonth(target.targetMonth)}へ切り替えますか？`)) return;

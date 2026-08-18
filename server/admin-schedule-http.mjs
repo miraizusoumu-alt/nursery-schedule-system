@@ -1,4 +1,5 @@
 import { AuthError } from "../lib/server/auth/permissions.mjs";
+import { createFamilyScheduleExcel } from "../lib/server/family-schedule/excel-export.mjs";
 import { assertCsrf, json, readJson, requireSession } from "./auth-http.mjs";
 
 function routeMatch(pathname, pattern) {
@@ -31,6 +32,22 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
           familyId: url.searchParams.get("familyId"),
           childId: url.searchParams.get("childId"),
         }),
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/schedules/export") {
+      const data = service.administratorScheduleExportData(session.actor, {
+        submissionPeriodId: url.searchParams.get("submissionPeriodId"),
+      });
+      const excel = await createFamilyScheduleExcel(data);
+      return new Response(excel.buffer, {
+        status: 200,
+        headers: {
+          "cache-control": "no-store",
+          "content-disposition": `attachment; filename="${excel.filename}"`,
+          "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "x-content-type-options": "nosniff",
+        },
       });
     }
 

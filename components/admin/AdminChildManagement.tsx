@@ -205,7 +205,10 @@ export function AdminChildManagement() {
   }, [fillFromChild]);
 
   useEffect(() => {
-    void load().catch((caught) => setError(caught instanceof Error ? caught.message : "園児情報を読み込めませんでした。"));
+    const timer = window.setTimeout(() => {
+      void load().catch((caught) => setError(caught instanceof Error ? caught.message : "園児情報を読み込めませんでした。"));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   async function run(operation: string, task: () => Promise<void>) {
