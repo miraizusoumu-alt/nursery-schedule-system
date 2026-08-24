@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { promisify } from "node:util";
 import { backupDatabase, restoreDatabase } from "../db/maintenance.mjs";
 import { seedDevelopmentData } from "../db/seed.mjs";
-import { REQUIRED_APPLICATION_TABLES, applyMigrations, inspectDatabase, openDatabase } from "../db/sqlite.mjs";
+import {
+  PROJECT_ROOT,
+  REQUIRED_APPLICATION_TABLES,
+  VERIFICATION_DATABASE_DIRECTORY,
+  applyMigrations,
+  inspectDatabase,
+  openDatabase,
+  resolveRuntimeDatabasePath,
+} from "../db/sqlite.mjs";
+
+const execFileAsync = promisify(execFile);
 
 async function withTemporaryDirectory(run) {
   const directory = await mkdtemp(resolve(tmpdir(), "nursery-schedule-db-"));
@@ -50,6 +62,19 @@ test("seeds only explicit fictional records and remains idempotent", async () =>
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_children").get().count, 2);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM standard_reasons").get().count, 4);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_patterns").get().count, 12);
+      assert.deepEqual(
+        database.prepare("SELECT name FROM children ORDER BY id").all().map(({ name }) => name),
+        ["ベビーローズA", "ベビーローズB"],
+      );
+      assert.deepEqual(
+        database.prepare("SELECT target_month, status, is_parent_target FROM submission_periods ORDER BY target_month").all()
+          .map(({ target_month, status, is_parent_target }) => ({ target_month, status, is_parent_target })),
+        [
+          { target_month: "2026-05", status: "closed", is_parent_target: 0 },
+          { target_month: "2026-06", status: "closed", is_parent_target: 0 },
+          { target_month: "2099-04", status: "open", is_parent_target: 1 },
+        ],
+      );
       const family = database.prepare("SELECT family_code, display_name FROM families").get();
       assert.equal(family.family_code, "DEMO-FAMILY-001");
       assert.match(family.display_name, /架空/);
@@ -107,4 +132,47 @@ test("rejects restore when the source file is not explicitly provided", async ()
     restoreDatabase({ databasePath: resolve(tmpdir(), "not-created.sqlite") }),
     /--file/,
   );
+});
+
+test("requires an explicit database inside .verification when verification mode is enabled", () => {
+  const verificationDatabase = resolve(VERIFICATION_DATABASE_DIRECTORY, "safe-test.sqlite");
+  assert.equal(
+    resolveRuntimeDatabasePath(verificationDatabase, { verificationMode: true, environmentDatabasePath: undefined }),
+    verificationDatabase,
+  );
+  assert.throws(
+    () => resolveRuntimeDatabasePath(undefined, { verificationMode: true, environmentDatabasePath: undefined }),
+    /NURSERY_DB_PATH/,
+  );
+  assert.throws(
+    () => resolveRuntimeDatabasePath(resolve(PROJECT_ROOT, "local-data", "must-not-open.sqlite"), { verificationMode: true }),
+    /.verification配下/,
+  );
+});
+
+test("prints CLI help and rejects invalid auth commands before opening a database", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const databasePath = resolve(directory, "must-not-be-created.sqlite");
+    const environment = {
+      ...process.env,
+      NURSERY_DB_PATH: databasePath,
+      NURSERY_VERIFICATION_MODE: "false",
+    };
+    const authCli = resolve(PROJECT_ROOT, "db", "auth-cli.mjs");
+    const databaseCli = resolve(PROJECT_ROOT, "db", "cli.mjs");
+
+    const authHelp = await execFileAsync(process.execPath, [authCli, "--help"], { env: environment });
+    assert.match(authHelp.stdout, /create\|reset/);
+    await assert.rejects(access(databasePath));
+
+    await assert.rejects(
+      execFileAsync(process.execPath, [authCli, "unsupported"], { env: environment }),
+      (error) => error.code === 1 && /create または reset/.test(error.stderr),
+    );
+    await assert.rejects(access(databasePath));
+
+    const databaseHelp = await execFileAsync(process.execPath, [databaseCli, "--help"], { env: environment });
+    assert.match(databaseHelp.stdout, /migrate\|seed\|status\|backup\|restore/);
+    await assert.rejects(access(databasePath));
+  });
 });

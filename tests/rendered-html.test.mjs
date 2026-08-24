@@ -34,14 +34,14 @@ test("server-renders the parent, staff, and admin shell", async () => {
   assert.match(html, /保護者画面/);
   assert.match(html, /職員画面/);
   assert.match(html, /保護者ログイン/);
-  assert.match(html, /管理者ログイン/);
+  assert.match(html, /正式な管理画面へ/);
   assert.match(html, /管理者画面/);
   assert.doesNotMatch(html, /前月コピー|前月予定の確認|過去の提出内容一覧|過去月を選択/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton|codex-preview/);
 });
 
 test("keeps the existing screens while domain and storage logic stay separated", async () => {
-  const [page, css, layout, packageJson, types, schedule, placement, shift, prototype, storage] = await Promise.all([
+  const [page, css, layout, packageJson, types, schedule, placement, shift, prototype, storage, staffManagement, adminClient] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -52,6 +52,8 @@ test("keeps the existing screens while domain and storage logic stay separated",
     readFile(new URL("../lib/domain/shift.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/domain/prototype.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/storage/local-storage.ts", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminStaffManagement.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminScheduleClient.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /loadPrototypeStore/);
@@ -112,6 +114,31 @@ test("keeps the existing screens while domain and storage logic stay separated",
   assert.match(page, /isWorkforceAdminMenu/);
   assert.match(page, /isWorkforceHistoryTarget/);
   assert.match(page, /試作機能・架空データのみ使用/);
+  assert.doesNotMatch(page, /<option value="短時間">/);
+  assert.doesNotMatch(types, /"短時間"/);
+  assert.doesNotMatch(prototype, /employmentType:\s*"短時間"/);
+  assert.match(staffManagement, /＋ 職員を登録/);
+  assert.match(staffManagement, /勤務開始日/);
+  assert.match(staffManagement, /担当区分を登録/);
+  assert.match(staffManagement, /保育士.*園長.*マネージャー.*配膳.*その他/s);
+  assert.match(staffManagement, /const checked = event\.currentTarget\.checked/);
+  assert.doesNotMatch(staffManagement, /setResponsibilityTypes\(\(current\) => event\.currentTarget\.checked/);
+  assert.match(staffManagement, /職員を選択してください/);
+  assert.match(staffManagement, /6 \* 60 \+ 30/);
+  assert.match(staffManagement, /index \* 15/);
+  assert.match(staffManagement, /この曜日は勤務可能/);
+  assert.match(staffManagement, /value !== 0/);
+  assert.match(staffManagement, /"06:45"/);
+  assert.match(staffManagement, /"20:15"/);
+  assert.match(staffManagement, /勤務条件を保存/);
+  assert.match(staffManagement, /基本情報は未保存です。/);
+  assert.match(staffManagement, /勤務条件の保存が完了しました。/);
+  assert.doesNotMatch(staffManagement, /月間勤務上限（時間）|連続勤務日数上限/);
+  assert.doesNotMatch(staffManagement, /職員コード<\/span><input/);
+  assert.ok(
+    adminClient.indexOf("<AdminStaffManagement") < adminClient.indexOf("<AdminChildManagement"),
+    "職員管理は /admin/schedules の先頭側へ表示する",
+  );
   assert.match(packageJson, /"dev:host"/);
   assert.match(packageJson, /server\/run\.mjs/);
   assert.match(packageJson, /auth:dev-accounts/);
@@ -135,6 +162,8 @@ test("keeps protected pages behind the loopback-only authentication gateway", as
   assert.match(runner, /NURSERY_GATEWAY_SECRET/);
   assert.match(gateway, /headers\[GATEWAY_SECRET_HEADER\] = gatewaySecret/);
   assert.match(gateway, /key\.toLowerCase\(\) === GATEWAY_SECRET_HEADER/);
+  assert.match(gateway, /socket\.on\("error", \(\) => upstream\.destroy\(\)\)/);
+  assert.match(gateway, /upstream\.on\("error", \(\) => socket\.destroy\(\)\)/);
   assert.match(worker, /GATEWAY_PROTECTED_PATHS/);
   assert.match(worker, /\/parent\/schedule/);
   assert.match(authHttp, /isParentSchedulePage/);
@@ -145,10 +174,12 @@ test("keeps protected pages behind the loopback-only authentication gateway", as
 });
 
 test("adds the protected database-backed parent schedule screen without changing the prototype top page", async () => {
-  const [page, parentPage, parentClient, familyService, scheduleHttp, css] = await Promise.all([
+  const [page, parentPage, parentAccountPage, parentClient, authClient, familyService, scheduleHttp, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/parent/schedule/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/parent/account/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/parent/ParentScheduleClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/auth/AuthClient.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/server/family-schedule/service.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/family-schedule-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -156,42 +187,111 @@ test("adds the protected database-backed parent schedule screen without changing
 
   assert.match(page, /loadPrototypeStore/);
   assert.match(parentPage, /ParentScheduleClient/);
-  assert.match(parentClient, /この子の予定を兄弟姉妹にも反映/);
-  assert.match(parentClient, /保存中|保存済み|保存失敗/);
-  assert.match(parentClient, /修正後は再提出が必要です/);
+  assert.match(parentPage, /翌月の利用予定/);
+  assert.doesNotMatch(parentPage, /保護者向け正式画面/);
+  assert.match(parentClient, /入力するお子さま/);
+  assert.match(parentClient, /data\.children\.length > 1/);
+  assert.match(parentClient, /入力内容は自動で保存されます/);
+  assert.match(parentClient, /途中で画面を閉じても、入力した内容は残ります/);
+  assert.match(parentClient, /保存しています|入力内容を保存しました|保存できませんでした/);
+  assert.match(parentClient, /園から再提出が許可されています|再提出のため修正中/);
   assert.match(parentClient, /入力内容は画面に残しています/);
-  assert.match(parentClient, /parent-fixed-actions|child-switcher/);
-  assert.match(parentClient, /園から提出期限が延長されています/);
+  assert.match(parentClient, /child-switcher/);
+  assert.match(parentClient, /確認する月を選んでください/);
+  assert.match(parentClient, /if \(periodId\) void loadDashboard\(periodId\)/);
+  assert.doesNotMatch(parentClient, /かんたん入力|いつもの予定を反映する/);
+  assert.match(parentClient, /曜日ごとに設定する/);
+  assert.match(parentClient, /この予定をきょうだいにもコピー/);
+  assert.match(parentClient, /コピー先で現在入力している内容は上書きされます/);
+  assert.match(parentClient, /この内容で園へ提出する/);
+  assert.match(parentClient, /この内容で園へ再提出する/);
+  assert.match(parentClient, /この内容で園へ提出しますか？/);
+  assert.match(parentClient, /提出後は、ご自身で予定を変更できません/);
+  assert.match(parentClient, /戻って確認する/);
+  assert.match(parentClient, /window\.scrollTo/);
+  assert.match(parentClient, /parent-submission-complete/);
+  assert.doesNotMatch(parentClient, /window\.confirm|\.confirm\(/);
+  assert.doesNotMatch(parentClient, /parent-fixed-actions/);
+  assert.doesNotMatch(parentClient, /<LogoutButton/);
+  assert.doesNotMatch(parentClient, /href="\/parent\/account"/);
+  assert.doesNotMatch(parentClient, /parent-account-menu|href="\/account\/password"/);
+  assert.match(parentClient, /parent-footer-actions/);
+  assert.match(parentClient, /\/api\/auth\/logout/);
+  assert.doesNotMatch(parentClient, /提出・変更履歴|parent-history-list/);
+  assert.doesNotMatch(parentClient, /parent-day-time/);
+  assert.match(parentAccountPage, /ParentAccountView/);
+  assert.match(authClient, /function LogoutButton|export function LogoutButton/);
+  assert.match(authClient, /<LogoutButton \/>/);
+  assert.match(parentClient, /ConfirmationDialog/);
+  assert.match(parentClient, /role="dialog"/);
+  assert.match(parentClient, /aria-modal="true"/);
   assert.match(parentClient, /提出後、園で予定を変更しています/);
-  assert.match(parentClient, /基本予定を反映/);
-  assert.match(parentClient, /現在の入力内容は上書きされます/);
+  assert.match(parentClient, /コピー先で現在入力している内容は上書きされます/);
+  assert.doesNotMatch(parentClient, /家庭内の入力状況|提出日時|最終更新日時/);
+  assert.doesNotMatch(parentClient, /\b\d{1,3}(?:\.\d{1,3}){3}:\d+\b/);
+  assert.doesNotMatch(parentClient, /提出期限|期限超過|期限延長/);
+  assert.doesNotMatch(parentClient, /\{period\.status\}/);
   assert.match(familyService, /CHILD_SCOPE_VIOLATION/);
   assert.match(familyService, /BEGIN IMMEDIATE/);
   assert.match(familyService, /Asia\/Tokyo|TOKYO_OFFSET_MINUTES/);
   assert.match(scheduleHttp, /assertCsrf/);
-  assert.match(css, /parent-fixed-actions/);
+  assert.match(scheduleHttp, /SUBMISSION_SCOPE_INVALID/);
+  assert.match(css, /parent-quick-entry/);
+  assert.match(css, /parent-submit-panel/);
+  assert.match(css, /parent-dialog-backdrop/);
+  assert.doesNotMatch(css, /\.parent-fixed-actions\s*\{/);
   assert.match(css, /overflow-x:\s*hidden/);
   assert.match(css, /@media \(max-width:\s*719px\)/);
 });
 
 test("connects protected administrator schedule operations without changing the prototype", async () => {
-  const [page, adminPage, adminClient, childManagement, adminHttp, gateway, authHttp, worker, familyService] = await Promise.all([
+  const [page, adminPage, accountsPage, adminClient, adminNavigation, childManagement, headcount, adminHttp, gateway, authHttp, worker, familyService, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/admin/schedules/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/accounts/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminScheduleClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminNavigation.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminChildManagement.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminMonthlyHeadcount.tsx", import.meta.url), "utf8"),
     readFile(new URL("../server/admin-schedule-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/auth-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/server/family-schedule/service.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /loadPrototypeStore/);
   assert.match(adminPage, /AdminScheduleClient/);
-  assert.match(adminClient, /保護者向け対象月|家庭別期限延長|最新提出内容の確認|保存前の確認|変更履歴/);
+  assert.match(adminPage, /正式な管理画面|園の運営管理/);
+  assert.match(accountsPage, /園の運営管理/);
+  assert.match(accountsPage, /AdminNavigation/);
+  assert.match(adminClient, /休園日・家庭保育協力日|最新提出内容の確認|保存前の確認|変更履歴|この家庭の再提出を許可/);
+  assert.match(adminClient, /園児の利用予定|月間利用予定時間|予定を確認/);
+  assert.doesNotMatch(adminClient, /確認する期間|新しい保護者向け対象月|\{family\.familyCode\}/);
   assert.match(adminClient, /AdminChildManagement/);
-  assert.match(childManagement, /園児を新規登録|基本利用パターン|基本利用パターン履歴|変更理由/);
+  assert.match(adminNavigation, /園児|利用予定|職員|シフト|集計・Excel|アカウント/);
+  assert.doesNotMatch(adminClient, /管理トップ/);
+  assert.doesNotMatch(adminNavigation, /管理トップ/);
+  assert.doesNotMatch(adminClient, /提出期限を延長|延長後期限|提出版 第|現在採用中 第/);
+  assert.doesNotMatch(adminClient, /\{period\.status\}/);
+  assert.match(adminClient, /AdminStaffManagement/);
+  assert.match(adminClient, /AdminMonthlyHeadcount/);
+  assert.match(childManagement, /＋ 園児を新規登録|園児を選択してください|基本利用予定|基本利用パターン履歴/);
+  assert.doesNotMatch(childManagement, /<span>変更理由<\/span>/);
+  assert.match(childManagement, /保護者ログインアカウント未作成/);
+  assert.match(childManagement, /保護者ログインアカウントを発行|既存の保護者ログインアカウントに追加/);
+  assert.doesNotMatch(childManagement, /membership\.familyName/);
+  assert.match(adminClient, /admin-closure-calendar/);
+  assert.match(adminClient, /monthCalendar\(selectedTargetMonth\)/);
+  assert.match(adminClient, /対象年度・対象月|monthsForFiscalYear|\{year\}年度|家庭保育協力日/);
+  assert.match(familyService, /isHardClosure|parent_input_allowed|family_cooperation/);
+  assert.doesNotMatch(childManagement, /<span>クラス<\/span>/);
+  assert.match(childManagement, /姓（かな）|名（かな）/);
+  assert.doesNotMatch(childManagement, /家庭所属の開始日|家庭所属の終了日/);
+  assert.match(childManagement, /基本利用予定を保存/);
+  assert.match(headcount, /0歳児.*1歳児.*2歳児.*合計/s);
+  assert.match(headcount, /人数が変わる時刻だけ/);
   assert.match(adminClient, /EFFECTIVE_VERSION_CHANGED|NO_CHANGES/);
   assert.match(adminHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
   assert.match(adminHttp, /assertCsrf/);
@@ -200,6 +300,9 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(worker, /\/admin\/schedules/);
   assert.match(familyService, /administratorScheduleDashboard|administratorRevisionHistory/);
   assert.match(familyService, /changeSummary\?\.kind === "administrator_revision"/);
+  assert.match(css, /"Yu Gothic UI"/);
+  assert.match(css, /grid-template-columns:\s*repeat\(6/);
+  assert.match(css, /admin-nav-logout/);
 });
 
 test("supports password managers, visibility controls, and the eight-character policy", async () => {
@@ -219,10 +322,24 @@ test("supports password managers, visibility controls, and the eight-character p
   assert.match(authClient, /autoComplete="current-password"/);
   assert.match(authClient, /autoComplete="new-password"/);
   assert.match(authClient, /new FormData\(event\.currentTarget\)/);
+  assert.match(authClient, /defaultValue=\{value\}/);
+  assert.match(authClient, /onInput=/);
+  assert.doesNotMatch(authClient, /\n\s+value=\{value\}\n/);
   assert.match(authClient, /requestAnimationFrame/);
   assert.match(authClient, /aria-pressed=\{visible\}/);
   assert.match(authClient, /コピーしました/);
+  assert.match(authClient, /保護者用 利用予定表ログイン案内/);
   assert.match(authClient, /navigator\.clipboard\?\.writeText/);
+  assert.match(authClient, /type="button" onClick=\{\(event\) => event\.currentTarget\.form\?\.requestSubmit\(\)\}/);
+  assert.match(authClient, /event\.preventDefault\(\)/);
+  assert.match(authClient, /ログインIDまたはパスワードが正しくありません。/);
+  assert.match(authClient, /通信に失敗しました。しばらくしてからもう一度お試しください。/);
+  assert.match(authClient, /ログイン処理でエラーが発生しました。しばらくしてからもう一度お試しください。/);
+  assert.match(authClient, /formData\.get\("username"\)/);
+  assert.match(authClient, /passwordInputRef\.current\.value = ""/);
+  assert.match(authClient, /loginIdInputRef\.current\.value = submittedLoginId/);
+  assert.doesNotMatch(authClient, /setLoginId\(/);
+  assert.doesNotMatch(authClient, /value=\{loginId\}/);
   assert.match(css, /\.password-field-actions/);
   assert.match(css, /\.password-action/);
   assert.match(readme, /8文字以上・128文字以下/);

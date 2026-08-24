@@ -13,7 +13,9 @@ export async function handleFamilyScheduleApiRequest(request, { service, authSer
   try {
     if (request.method === "GET" && url.pathname === "/api/family/schedule") {
       const session = requireSession(request, authService, { type: "family" });
-      return json({ ok: true, dashboard: service.dashboard(session.actor) });
+      return json({ ok: true, dashboard: service.dashboard(session.actor, {
+        submissionPeriodId: url.searchParams.get("submissionPeriodId"),
+      }) });
     }
 
     const childUpdate = routeMatch(url.pathname, /^\/api\/family\/schedule\/children\/([^/]+)$/);
@@ -28,20 +30,26 @@ export async function handleFamilyScheduleApiRequest(request, { service, authSer
       const session = requireSession(request, authService, { type: "family" });
       assertCsrf(request, session);
       const body = await readJson(request);
-      return json({ ok: true, dashboard: service.copyChildScheduleToSiblings(session.actor, body.sourceChildId) });
+      return json({ ok: true, dashboard: service.copyChildScheduleToSiblings(session.actor, body.sourceChildId, body) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/family/schedule/apply-basic-pattern") {
       const session = requireSession(request, authService, { type: "family" });
       assertCsrf(request, session);
       const body = await readJson(request);
-      return json({ ok: true, dashboard: service.applyBasicUsagePattern(session.actor, body.childId) });
+      return json({ ok: true, dashboard: service.applyBasicUsagePattern(session.actor, body.childId, body) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/family/schedule/submit") {
       const session = requireSession(request, authService, { type: "family" });
       assertCsrf(request, session);
-      return json({ ok: true, dashboard: service.submitFamilySchedules(session.actor) });
+      const body = await readJson(request);
+      const clientSelectedScope = ["familyId", "childId", "sourceChildId"]
+        .some((key) => Object.prototype.hasOwnProperty.call(body, key));
+      if (clientSelectedScope) {
+        throw new AuthError("SUBMISSION_SCOPE_INVALID", "提出対象はログイン中の家庭から安全に決定します。", 403);
+      }
+      return json({ ok: true, dashboard: service.submitFamilySchedules(session.actor, body) });
     }
 
     return json({ ok: false, code: "NOT_FOUND", message: "APIが見つかりません。" }, 404);

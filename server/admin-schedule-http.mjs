@@ -19,6 +19,7 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
         ok: true,
         dashboard: service.administratorScheduleDashboard(session.actor, {
           submissionPeriodId: url.searchParams.get("submissionPeriodId"),
+          targetMonth: url.searchParams.get("targetMonth"),
           familyId: url.searchParams.get("familyId"),
         }),
       });
@@ -31,6 +32,15 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
           submissionPeriodId: url.searchParams.get("submissionPeriodId"),
           familyId: url.searchParams.get("familyId"),
           childId: url.searchParams.get("childId"),
+        }),
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/schedules/headcount") {
+      return json({
+        ok: true,
+        headcount: service.administratorMonthlyHeadcount(session.actor, {
+          submissionPeriodId: url.searchParams.get("submissionPeriodId"),
         }),
       });
     }
@@ -59,6 +69,8 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
     const body = await readJson(request);
     const childUpdate = routeMatch(url.pathname, /^\/api\/admin\/schedules\/children\/([^/]+)$/);
     const patternUpdate = routeMatch(url.pathname, /^\/api\/admin\/schedules\/children\/([^/]+)\/basic-patterns$/);
+    const familyAccountIssue = routeMatch(url.pathname, /^\/api\/admin\/schedules\/children\/([^/]+)\/family-account$/);
+    const familyMembership = routeMatch(url.pathname, /^\/api\/admin\/schedules\/children\/([^/]+)\/family-membership$/);
     if (request.method === "POST" && url.pathname === "/api/admin/schedules/children") {
       return json({ ok: true, management: service.createChild(session.actor, body) }, 201);
     }
@@ -68,14 +80,37 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
     if (request.method === "PUT" && patternUpdate) {
       return json({ ok: true, result: service.updateBasicUsagePatterns(session.actor, patternUpdate[0], body) });
     }
+    if (request.method === "POST" && familyAccountIssue) {
+      const credential = await authService.issueFamilyAccountForChild(session.actor, {
+        ...body,
+        childId: familyAccountIssue[0],
+      });
+      return json({ ok: true, credential, management: service.administratorChildManagement(session.actor) }, 201);
+    }
+    if (request.method === "POST" && familyMembership) {
+      const result = authService.linkChildToFamilyAccount(session.actor, {
+        ...body,
+        childId: familyMembership[0],
+      });
+      return json({ ok: true, result, management: service.administratorChildManagement(session.actor) });
+    }
     if (request.method === "POST" && url.pathname === "/api/admin/schedules/parent-target") {
       return json({ ok: true, result: service.setParentTargetPeriod(session.actor, body) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/admin/schedules/closure-day") {
+      return json({ ok: true, result: service.saveClosureDay(session.actor, body) }, 201);
+    }
+    if (request.method === "DELETE" && url.pathname === "/api/admin/schedules/closure-day") {
+      return json({ ok: true, result: service.removeClosureDay(session.actor, body) });
     }
     if (request.method === "PUT" && url.pathname === "/api/admin/schedules/deadline-extension") {
       return json({ ok: true, result: service.setFamilyDeadlineExtension(session.actor, body) });
     }
     if (request.method === "POST" && url.pathname === "/api/admin/schedules/confirm") {
       return json({ ok: true, result: service.confirmLatestFamilySubmission(session.actor, body) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/admin/schedules/allow-resubmission") {
+      return json({ ok: true, result: service.allowFamilyResubmission(session.actor, body) });
     }
     if (request.method === "POST" && url.pathname === "/api/admin/schedules/revision/preview") {
       return json({ ok: true, result: service.previewAdministratorRevision(session.actor, body) });

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { generateLoginId, generateTemporaryPassword, hashPassword } from "../lib/server/auth/security.mjs";
+import { generateFamilyPassword, generateLoginId, generateTemporaryPassword, hashPassword } from "../lib/server/auth/security.mjs";
 
 const DEVELOPMENT_LABELS = Object.freeze({
   family: "架空 認証テスト家庭",
@@ -22,11 +22,11 @@ async function createFamilyAccount(database, timestamp) {
   ).get(DEVELOPMENT_LABELS.family);
   if (existing?.password_hash) return { type: "family", created: false, loginId: existing.login_id };
 
-  const temporaryPassword = generateTemporaryPassword();
+  const temporaryPassword = generateFamilyPassword();
   const passwordHash = await hashPassword(temporaryPassword);
   if (existing) {
     database.prepare(
-      `UPDATE family_accounts SET password_hash = ?, must_change_password = 1,
+      `UPDATE family_accounts SET password_hash = ?, must_change_password = 0,
        temporary_password_issued_at = ?, credential_version = credential_version + 1, updated_at = ? WHERE id = ?`,
     ).run(passwordHash, timestamp, timestamp, existing.account_id);
     operation(database, "development_account.initialized", "family_account", existing.account_id, { loginId: existing.login_id }, timestamp);
@@ -45,7 +45,7 @@ async function createFamilyAccount(database, timestamp) {
     `INSERT INTO family_accounts
      (id, family_id, login_id, password_hash, must_change_password, temporary_password_issued_at,
       credential_version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 1, ?, 1, ?, ?)`,
+     VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?)`,
   ).run(accountId, familyId, loginId, passwordHash, timestamp, timestamp, timestamp);
   operation(database, "development_account.created", "family_account", accountId, { familyId, familyCode, loginId }, timestamp);
   return { type: "family", created: true, loginId, temporaryPassword };
@@ -96,11 +96,13 @@ export async function resetDevelopmentAuthAccounts(database, currentTime = new D
   if (targets.some((target) => !target.row)) throw new Error("開発用アカウントが揃っていません。先に npm run auth:dev-accounts を実行してください。");
   const results = [];
   for (const target of targets) {
-    const temporaryPassword = generateTemporaryPassword();
+    const temporaryPassword = target.table === "family_accounts"
+      ? generateFamilyPassword()
+      : generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
     if (target.table === "family_accounts") {
       database.prepare(
-        `UPDATE family_accounts SET password_hash = ?, must_change_password = 1,
+        `UPDATE family_accounts SET password_hash = ?, must_change_password = 0,
          temporary_password_issued_at = ?, credential_version = credential_version + 1,
          stopped_at = NULL, updated_at = ? WHERE id = ?`,
       ).run(passwordHash, timestamp, timestamp, target.row.id);

@@ -1,11 +1,20 @@
 import { access } from "node:fs/promises";
 import { backupDatabase, restoreDatabase } from "./maintenance.mjs";
 import { seedDevelopmentData } from "./seed.mjs";
-import { DEFAULT_DATABASE_PATH, applyMigrations, inspectDatabase, openDatabase, resolveDatabasePath } from "./sqlite.mjs";
+import { applyMigrations, inspectDatabase, openDatabase, resolveRuntimeDatabasePath } from "./sqlite.mjs";
+
+const COMMANDS = new Set(["migrate", "seed", "status", "backup", "restore"]);
 
 function optionValue(name) {
   const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name}の値を指定してください。`);
+  return value;
+}
+
+function printUsage() {
+  console.log("使用方法: node db/cli.mjs <migrate|seed|status|backup|restore> [--db <DBパス>]");
 }
 
 async function fileExists(path) {
@@ -19,7 +28,11 @@ async function fileExists(path) {
 
 async function main() {
   const command = process.argv[2];
-  const databasePath = resolveDatabasePath(optionValue("--db") || DEFAULT_DATABASE_PATH);
+  if (!command || command === "--help" || command === "-h") return printUsage();
+  if (!COMMANDS.has(command)) {
+    throw new Error("コマンドはmigrate、seed、status、backup、restoreのいずれかを指定してください。");
+  }
+  const databasePath = resolveRuntimeDatabasePath(optionValue("--db"));
 
   if (command === "migrate") {
     const database = openDatabase(databasePath);
@@ -75,8 +88,6 @@ async function main() {
     console.log(`復元前バックアップ: ${result.preRestoreBackupPath || "元DBなし"}`);
     return;
   }
-
-  throw new Error("コマンドはmigrate、seed、status、backup、restoreのいずれかを指定してください。");
 }
 
 main().catch((error) => {

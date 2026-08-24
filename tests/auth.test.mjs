@@ -7,7 +7,12 @@ import { createDevelopmentAuthAccounts, resetDevelopmentAuthAccounts } from "../
 import { applyMigrations, inspectDatabase, openDatabase } from "../db/sqlite.mjs";
 import { AuthError } from "../lib/server/auth/permissions.mjs";
 import { createAuthService } from "../lib/server/auth/service.mjs";
-import { generateTemporaryPassword, hashPassword } from "../lib/server/auth/security.mjs";
+import {
+  FAMILY_PASSWORD_CHARACTERS,
+  generateFamilyPassword,
+  generateTemporaryPassword,
+  hashPassword,
+} from "../lib/server/auth/security.mjs";
 import { authorizeProtectedPage, handleAuthApiRequest } from "../server/auth-http.mjs";
 
 async function withAuthDatabase(run, initialTime = new Date("2026-08-11T00:00:00.000Z")) {
@@ -28,8 +33,8 @@ async function withAuthDatabase(run, initialTime = new Date("2026-08-11T00:00:00
 async function insertFixture(database, currentTime) {
   const timestamp = currentTime.toISOString();
   const passwords = {
-    familyA: generateTemporaryPassword(),
-    familyB: generateTemporaryPassword(),
+    familyA: generateFamilyPassword(),
+    familyB: generateFamilyPassword(),
     normal: generateTemporaryPassword(),
     master: generateTemporaryPassword(),
   };
@@ -78,7 +83,7 @@ test("logs in and out with hashed passwords and hashed session tokens", async ()
   await withAuthDatabase(async ({ database, service, fixture }) => {
     const result = await service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "test-source" });
     assert.equal(result.actor.familyId, "family-a");
-    assert.equal(result.actor.mustChangePassword, true);
+    assert.equal(result.actor.mustChangePassword, false);
     assert.ok(service.sessionByToken(result.session.token));
     const sessionRow = database.prepare("SELECT token_hash, csrf_token_hash FROM auth_sessions WHERE id = ?").get(result.session.sessionId);
     assert.notEqual(sessionRow.token_hash, result.session.token);
@@ -97,23 +102,32 @@ test("logs in and out with hashed passwords and hashed session tokens", async ()
   });
 });
 
-test("forces the first password change and invalidates old passwords and sessions after reissue", async () => {
-  await withAuthDatabase(async ({ service, fixture }) => {
+test("generates fixed eight-character family passwords without ambiguous characters", () => {
+  for (let index = 0; index < 500; index += 1) {
+    const password = generateFamilyPassword();
+    assert.equal(password.length, 8);
+    assert.match(password, /^[A-HJ-NP-Z2-9]{8}$/);
+    assert.equal([...password].every((character) => FAMILY_PASSWORD_CHARACTERS.includes(character)), true);
+    assert.doesNotMatch(password, /[O0I1]/);
+  }
+});
+
+test("lets families use school-issued passwords without self-service changes and invalidates sessions after reissue", async () => {
+  await withAuthDatabase(async ({ database, service, fixture }) => {
     const first = await service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "family-a" });
-    const changedPassword = generateTemporaryPassword();
-    const changed = await service.changePassword({ session: service.sessionByToken(first.session.token), currentPassword: fixture.passwords.familyA, newPassword: changedPassword });
-    assert.equal(service.sessionByToken(first.session.token), null);
-    assert.equal(changed.actor.mustChangePassword, false);
-    await expectAuthError(() => service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "old" }), "INVALID_CREDENTIALS");
-    const current = await service.login({ scope: "family", loginId: "demo-family-a", password: changedPassword, source: "new" });
+    assert.equal(first.actor.mustChangePassword, false);
+    await expectAuthError(
+      () => service.changePassword({ session: service.sessionByToken(first.session.token), currentPassword: fixture.passwords.familyA, newPassword: generateTemporaryPassword() }),
+      "PASSWORD_CHANGE_NOT_ALLOWED",
+    );
 
     const master = await service.login({ scope: "administrator", loginId: "demo-master", password: fixture.passwords.master, source: "master" });
     const reissued = await service.reissueFamilyPassword(master.actor, "family-a");
-    assert.equal(service.sessionByToken(current.session.token), null);
-    assert.equal(service.sessionByToken(changed.session.token), null);
-    await expectAuthError(() => service.login({ scope: "family", loginId: "demo-family-a", password: changedPassword, source: "old-new" }), "INVALID_CREDENTIALS");
+    assert.equal(database.prepare("SELECT must_change_password FROM family_accounts WHERE family_id = 'family-a'").get().must_change_password, 0);
+    assert.equal(service.sessionByToken(first.session.token), null);
+    await expectAuthError(() => service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "old" }), "INVALID_CREDENTIALS");
     const temporary = await service.login({ scope: "family", loginId: reissued.loginId, password: reissued.temporaryPassword, source: "temporary" });
-    assert.equal(temporary.actor.mustChangePassword, true);
+    assert.equal(temporary.actor.mustChangePassword, false);
   });
 });
 
@@ -140,7 +154,7 @@ test("uses Tokyo stop dates, rate limits five failures, and expires administrato
   await withAuthDatabase(async ({ service, fixture, clock }) => {
     const master = await service.login({ scope: "administrator", loginId: "demo-master", password: fixture.passwords.master, source: "master" });
     clock.value = new Date("2026-08-11T14:59:59.000Z");
-    service.setFamilyStopDate(master.actor, "family-b", "2026-08-11");
+    service.setFamilyStopDate(master.actor, "family-b", "2026-08-12");
     const family = await service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "tokyo" });
     clock.value = new Date("2026-08-11T15:00:00.000Z");
     const stoppedApi = await handleAuthApiRequest(new Request("http://localhost:3000/api/family/me", {
@@ -152,7 +166,7 @@ test("uses Tokyo stop dates, rate limits five failures, and expires administrato
     }), service);
     assert.equal(stoppedPage.status, 303);
     assert.equal(service.sessionByToken(family.session.token), null);
-    await expectAuthError(() => service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "tokyo-next-day" }), "INVALID_CREDENTIALS");
+    await expectAuthError(() => service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "tokyo-next-day" }), "ACCOUNT_UNAVAILABLE");
 
     const badPassword = generateTemporaryPassword();
     clock.value = new Date("2026-08-11T16:00:00.000Z");
@@ -176,6 +190,49 @@ test("uses Tokyo stop dates, rate limits five failures, and expires administrato
   });
 });
 
+test("enforces family usage start and stop dates on their Tokyo calendar boundaries", async () => {
+  await withAuthDatabase(async ({ service, fixture, clock }) => {
+    const master = await service.login({ scope: "administrator", loginId: "demo-master", password: fixture.passwords.master, source: "date-boundary-master" });
+    clock.value = new Date("2026-08-10T15:00:00.000Z");
+    service.recordFamilyHandover(master.actor, "family-b", "2026-08-12");
+    await expectAuthError(
+      () => service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "before-start" }),
+      "ACCOUNT_UNAVAILABLE",
+    );
+    clock.value = new Date("2026-08-11T15:00:00.000Z");
+    const started = await service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "start-date" });
+    assert.ok(service.sessionByToken(started.session.token));
+    service.setFamilyStopDate(master.actor, "family-b", "2026-08-13");
+    clock.value = new Date("2026-08-12T14:59:59.000Z");
+    assert.ok(service.sessionByToken(started.session.token));
+    clock.value = new Date("2026-08-12T15:00:00.000Z");
+    assert.equal(service.sessionByToken(started.session.token), null);
+    await expectAuthError(
+      () => service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "stop-date" }),
+      "ACCOUNT_UNAVAILABLE",
+    );
+  });
+});
+
+test("resets consecutive login failures after a successful login", async () => {
+  await withAuthDatabase(async ({ service, fixture }) => {
+    const wrongPassword = generateFamilyPassword();
+    for (let index = 0; index < 4; index += 1) {
+      await expectAuthError(
+        () => service.login({ scope: "family", loginId: "demo-family-b", password: wrongPassword, source: "reset-failures" }),
+        "INVALID_CREDENTIALS",
+      );
+    }
+    await service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "reset-failures" });
+    for (let index = 0; index < 4; index += 1) {
+      await expectAuthError(
+        () => service.login({ scope: "family", loginId: "demo-family-b", password: wrongPassword, source: "reset-failures" }),
+        "INVALID_CREDENTIALS",
+      );
+    }
+  });
+});
+
 test("enforces password length boundaries on the server and never stores plaintext", async () => {
   await withAuthDatabase(async ({ database, service, fixture }) => {
     const seven = "a".repeat(7);
@@ -185,15 +242,11 @@ test("enforces password length boundaries on the server and never stores plainte
     const oneHundredTwentyEight = "c".repeat(128);
     const oneHundredTwentyNine = "d".repeat(129);
 
-    const familyA = await service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "password-7-8" });
+    const familyA = await service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "family-password-disabled" });
     await expectAuthError(
-      () => service.changePassword({ session: service.sessionByToken(familyA.session.token), currentPassword: fixture.passwords.familyA, newPassword: seven }),
-      "INVALID_PASSWORD",
+      () => service.changePassword({ session: service.sessionByToken(familyA.session.token), currentPassword: fixture.passwords.familyA, newPassword: eightNumeric }),
+      "PASSWORD_CHANGE_NOT_ALLOWED",
     );
-    await service.changePassword({ session: service.sessionByToken(familyA.session.token), currentPassword: fixture.passwords.familyA, newPassword: eightNumeric });
-
-    const familyB = await service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "password-128" });
-    await service.changePassword({ session: service.sessionByToken(familyB.session.token), currentPassword: fixture.passwords.familyB, newPassword: oneHundredTwentyEight });
 
     const normal = await service.login({ scope: "administrator", loginId: "demo-normal", password: fixture.passwords.normal, source: "normal-password-7-8" });
     await expectAuthError(
@@ -245,8 +298,53 @@ test("returns identical HTTP errors for unknown and known login IDs", async () =
     const unknownBody = await unknown.json();
     const knownBody = await known.json();
     assert.deepEqual(unknownBody, knownBody);
+    assert.equal(unknownBody.code, "INVALID_CREDENTIALS");
+    assert.equal(unknownBody.message, "ログインIDまたはパスワードを確認してください。");
     assert.equal(JSON.stringify(unknownBody).includes(wrongPassword), false);
     assert.equal(JSON.stringify(knownBody).includes(fixture.passwords.familyB), false);
+
+    const successful = await handleAuthApiRequest(new Request("http://localhost:3000/api/auth/login/family", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        "content-type": "application/json",
+        "x-forwarded-for": "successful-http",
+      },
+      body: JSON.stringify({ loginId: "demo-family-a", password: fixture.passwords.familyA }),
+    }), { service });
+    assert.equal(successful.status, 200);
+    assert.equal((await successful.json()).redirectTo, "/parent/schedule");
+  });
+});
+
+test("sends a family directly to schedules and rejects self-service password changes", async () => {
+  await withAuthDatabase(async ({ service, fixture }) => {
+    const origin = "http://localhost:3000";
+    const loginResponse = await handleAuthApiRequest(new Request(`${origin}/api/auth/login/family`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json", "x-forwarded-for": "password-change-http" },
+      body: JSON.stringify({ loginId: "demo-family-a", password: fixture.passwords.familyA }),
+    }), { service });
+    assert.equal(loginResponse.status, 200);
+    assert.equal((await loginResponse.clone().json()).redirectTo, "/parent/schedule");
+
+    const loginCookies = loginResponse.headers.getSetCookie().map((value) => value.split(";", 1)[0]);
+    const csrfToken = decodeURIComponent(loginCookies.find((value) => value.startsWith("nursery_csrf="))?.split("=", 2)[1] ?? "");
+    const changeResponse = await handleAuthApiRequest(new Request(`${origin}/api/auth/change-password`, {
+      method: "POST",
+      headers: {
+        origin,
+        cookie: loginCookies.join("; "),
+        "content-type": "application/json",
+        "x-csrf-token": csrfToken,
+      },
+      body: JSON.stringify({ currentPassword: fixture.passwords.familyA, newPassword: generateTemporaryPassword() }),
+    }), { service });
+    assert.equal(changeResponse.status, 403);
+    assert.equal((await changeResponse.json()).code, "PASSWORD_CHANGE_NOT_ALLOWED");
+    assert.equal(authorizeProtectedPage(new Request(`${origin}/parent/schedule`, { headers: { cookie: loginCookies.join("; ") } }), service), null);
+    const passwordPage = authorizeProtectedPage(new Request(`${origin}/account/password`, { headers: { cookie: loginCookies.join("; ") } }), service);
+    assert.equal(new URL(passwordPage.headers.get("location")).pathname, "/parent/schedule");
   });
 });
 
@@ -345,11 +443,9 @@ test("rejects untrusted API writes and protects pages on the server", async () =
 
     const temporaryFamily = await service.login({ scope: "family", loginId: "demo-family-a", password: fixture.passwords.familyA, source: "temporary-page" });
     const passwordRedirect = authorizeProtectedPage(new Request("http://localhost:3000/", { headers: { cookie: `nursery_session=${temporaryFamily.session.token}` } }), service);
-    assert.equal(passwordRedirect.status, 303);
-    assert.equal(new URL(passwordRedirect.headers.get("location")).pathname, "/account/password");
+    assert.equal(passwordRedirect, null);
     const passwordRequiredApi = await handleAuthApiRequest(new Request("http://localhost:3000/api/family/me", { headers: { cookie: `nursery_session=${temporaryFamily.session.token}` } }), { service });
-    assert.equal(passwordRequiredApi.status, 403);
-    assert.equal((await passwordRequiredApi.json()).code, "PASSWORD_CHANGE_REQUIRED");
+    assert.equal(passwordRequiredApi.status, 200);
 
     const noCsrf = await handleAuthApiRequest(new Request("http://localhost:3000/api/admin/families", {
       method: "POST",
@@ -366,6 +462,19 @@ test("rejects untrusted API writes and protects pages on the server", async () =
     }), { service });
     assert.equal(forgedCsrf.status, 403);
     assert.equal((await forgedCsrf.json()).code, "CSRF_INVALID");
+
+    const legacyIssue = await handleAuthApiRequest(new Request("http://localhost:3000/api/admin/families", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: cookieHeader,
+        "content-type": "application/json",
+        "x-csrf-token": decodeURIComponent(csrfSetCookie.split(";")[0].split("=", 2)[1]),
+      },
+      body: JSON.stringify({ familyCode: "DEMO-LEGACY", displayName: "架空旧導線家庭", loginId: "demo-legacy-family" }),
+    }), { service });
+    assert.equal(legacyIssue.status, 409);
+    assert.equal((await legacyIssue.json()).code, "CHILD_REQUIRED");
 
     const wrongOrigin = await handleAuthApiRequest(new Request("http://localhost:3000/api/auth/login/admin", {
       method: "POST",
@@ -413,9 +522,11 @@ test("records issue, handover, reissue, stop, role, and security-setting operati
       displayName: "架空 操作履歴家庭",
       loginId: "demo-audit-family",
     });
+    assert.equal(database.prepare("SELECT must_change_password FROM family_accounts WHERE family_id = ?").get(family.familyId).must_change_password, 0);
     service.recordFamilyHandover(master.actor, family.familyId, "2026-08-12");
     service.setFamilyStopDate(master.actor, family.familyId, "2026-08-31");
     const reissuedFamily = await service.reissueFamilyPassword(master.actor, family.familyId);
+    assert.equal(database.prepare("SELECT must_change_password FROM family_accounts WHERE family_id = ?").get(family.familyId).must_change_password, 0);
     const administrator = await service.issueAdministrator(master.actor, {
       loginId: "demo-audit-admin",
       displayName: "架空 操作履歴管理者",
@@ -439,7 +550,7 @@ test("records issue, handover, reissue, stop, role, and security-setting operati
     const operations = new Set(database.prepare("SELECT operation FROM operation_logs").all().map((row) => row.operation));
     for (const operation of [
       "family_account.issued",
-      "family_account.handover_recorded",
+      "family_account.start_date_changed",
       "family_account.stop_date_changed",
       "family_account.password_reissued",
       "administrator.issued",
@@ -477,7 +588,8 @@ test("records account operations without passwords and keeps development account
     await expectAuthError(() => service.login({ scope: "family", loginId: firstFamily.loginId, password: firstFamily.temporaryPassword, source: "development-old" }), "INVALID_CREDENTIALS");
     const resetFamily = reset.find((entry) => entry.type === "family");
     const resetLogin = await service.login({ scope: "family", loginId: resetFamily.loginId, password: resetFamily.temporaryPassword, source: "development-new" });
-    assert.equal(resetLogin.actor.mustChangePassword, true);
+    assert.equal(resetLogin.actor.mustChangePassword, false);
+    assert.equal(database.prepare("SELECT must_change_password FROM family_accounts WHERE login_id = ?").get(resetFamily.loginId).must_change_password, 0);
     for (const entry of first) {
       const allLogs = database.prepare("SELECT COALESCE(GROUP_CONCAT(detail_json, ''), '') AS text FROM operation_logs").get().text;
       assert.equal(allLogs.includes(entry.temporaryPassword), false);
@@ -495,8 +607,8 @@ test("records account operations without passwords and keeps development account
     const source = await readFile(new URL("../db/auth-dev-accounts.mjs", import.meta.url), "utf8");
     assert.doesNotMatch(source, /initialPassword\s*=\s*["']/i);
     const cliSource = await readFile(new URL("../db/auth-cli.mjs", import.meta.url), "utf8");
-    assert.match(cliSource, /resolveDatabasePath\(optionValue\("--db"\)\)/);
-    assert.doesNotMatch(cliSource, /optionValue\("--db"\) \|\| DEFAULT_DATABASE_PATH/);
+    assert.match(cliSource, /resolveRuntimeDatabasePath\(optionValue\("--db"\)\)/);
+    assert.ok(cliSource.indexOf("COMMANDS.has(command)") < cliSource.indexOf("openDatabase(databasePath)"));
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

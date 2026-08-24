@@ -4,9 +4,10 @@ import { AdminScheduleClient } from "@/components/admin/AdminScheduleClient";
 export default function AdminSchedulesPage() {
   return (
     <AuthShell
-      eyebrow="第4A段階 利用予定管理"
-      title="提出予定の確認・修正"
-      description="対象月、家庭別期限、提出確認、園での修正履歴を管理します。"
+      eyebrow="正式な管理画面"
+      title="園の運営管理"
+      description="園児、利用予定、職員、集計、アカウントを目的別に管理できます。"
+      showHomeLink={false}
     >
       <AdminScheduleClient />
     </AuthShell>

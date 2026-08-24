@@ -1,0 +1,1 @@
+ALTER TABLE `family_submissions` ADD `resubmission_allowed_for_version_id` text REFERENCES family_submission_versions(id);

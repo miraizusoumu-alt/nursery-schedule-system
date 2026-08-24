@@ -140,14 +140,14 @@ export const sampleStaff: StaffProfile[] = [
     maxMonthlyHours: 96,
     maxConsecutiveDays: 3,
     fixedDaysOff: ["tue", "fri", "sat"],
-    memo: "短時間勤務中心",
+    memo: "日中勤務中心",
     validFrom: "2026-04-01",
     validTo: "2027-03-31",
   },
   {
     id: "staff-003",
     name: "山本 けん",
-    employmentType: "短時間",
+    employmentType: "非常勤",
     qualifications: ["子育て支援員"],
     availability: {
       ...cloneAvailability(defaultStaffAvailability),

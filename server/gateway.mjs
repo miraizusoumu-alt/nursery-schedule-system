@@ -1,11 +1,13 @@
 import http from "node:http";
 import net from "node:net";
-import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
+import { applyMigrations, openDatabase, resolveRuntimeDatabasePath } from "../db/sqlite.mjs";
 import { createAuthService } from "../lib/server/auth/service.mjs";
 import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
+import { createStaffManagementService } from "../lib/server/staff-management/service.mjs";
 import { authorizeProtectedPage, handleAuthApiRequest } from "./auth-http.mjs";
 import { handleAdminScheduleApiRequest } from "./admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "./family-schedule-http.mjs";
+import { handleStaffManagementApiRequest } from "./staff-management-http.mjs";
 
 const MAX_AUTH_BODY_BYTES = 1024 * 1024;
 const GATEWAY_SECRET_HEADER = "x-nursery-gateway-secret";
@@ -96,6 +98,7 @@ function proxyUpgrade(request, socket, head, internalPort, gatewaySecret) {
     if (head.length) upstream.write(head);
     socket.pipe(upstream).pipe(socket);
   });
+  socket.on("error", () => upstream.destroy());
   upstream.on("error", () => socket.destroy());
 }
 
@@ -105,15 +108,18 @@ export async function createGateway({
   internalPort = 3100,
   hostname = "0.0.0.0",
   gatewaySecret,
+  verificationMode = process.env.NURSERY_VERIFICATION_MODE === "true",
   runtimeSecureCookies = process.env.NURSERY_SECURE_COOKIES === "true",
 } = {}) {
   if (typeof gatewaySecret !== "string" || gatewaySecret.length < 32) {
     throw new Error("認証ゲートウェイの内部接続情報が正しくありません。");
   }
-  const database = openDatabase(databasePath);
+  const resolvedDatabasePath = resolveRuntimeDatabasePath(databasePath, { verificationMode });
+  const database = openDatabase(resolvedDatabasePath);
   await applyMigrations(database);
   const service = createAuthService({ database });
   const familyScheduleService = createFamilyScheduleService({ database });
+  const staffManagementService = createStaffManagementService({ database });
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {
@@ -122,6 +128,8 @@ export async function createGateway({
         const request = await toFetchRequest(incoming, publicPort, true);
         const adminScheduleResponse = await handleAdminScheduleApiRequest(request, { service: familyScheduleService, authService: service });
         if (adminScheduleResponse) return await sendFetchResponse(adminScheduleResponse, outgoing);
+        const staffManagementResponse = await handleStaffManagementApiRequest(request, { service: staffManagementService, authService: service });
+        if (staffManagementResponse) return await sendFetchResponse(staffManagementResponse, outgoing);
         const familyScheduleResponse = await handleFamilyScheduleApiRequest(request, { service: familyScheduleService, authService: service });
         if (familyScheduleResponse) return await sendFetchResponse(familyScheduleResponse, outgoing);
         const response = await handleAuthApiRequest(request, { service, runtimeSecureCookies });
@@ -146,6 +154,7 @@ export async function createGateway({
   });
   return {
     database,
+    databasePath: resolvedDatabasePath,
     server,
     service,
     async close() {

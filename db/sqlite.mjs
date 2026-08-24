@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
+import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 export const PROJECT_ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const DEFAULT_DATABASE_PATH = resolve(PROJECT_ROOT, "local-data", "nursery-schedule.sqlite");
 export const DEFAULT_MIGRATIONS_PATH = resolve(PROJECT_ROOT, "drizzle");
+export const VERIFICATION_DATABASE_DIRECTORY = resolve(PROJECT_ROOT, ".verification");
 
 export const REQUIRED_APPLICATION_TABLES = [
   "administrators",
@@ -33,6 +34,10 @@ export const REQUIRED_APPLICATION_TABLES = [
   "operation_logs",
   "standard_reason_histories",
   "standard_reasons",
+  "staff_members",
+  "staff_qualifications",
+  "staff_weekly_availability",
+  "staff_work_condition_versions",
   "submission_periods",
 ];
 
@@ -41,6 +46,28 @@ export function resolveDatabasePath(value = process.env.NURSERY_DB_PATH || DEFAU
   const extension = extname(databasePath).toLowerCase();
   if (![".sqlite", ".sqlite3", ".db"].includes(extension)) {
     throw new Error("DBファイルは.sqlite、.sqlite3、.dbのいずれかを指定してください。");
+  }
+  return databasePath;
+}
+
+export function resolveRuntimeDatabasePath(value, options = {}) {
+  const verificationMode = options.verificationMode ?? process.env.NURSERY_VERIFICATION_MODE === "true";
+  const environmentDatabasePath = Object.prototype.hasOwnProperty.call(options, "environmentDatabasePath")
+    ? options.environmentDatabasePath
+    : process.env.NURSERY_DB_PATH;
+  const selectedPath = value || environmentDatabasePath;
+  if (verificationMode && !selectedPath) {
+    throw new Error("検証モードではNURSERY_DB_PATHで検証DBを明示してください。");
+  }
+
+  const databasePath = resolveDatabasePath(selectedPath || DEFAULT_DATABASE_PATH);
+  if (verificationMode) {
+    const relativePath = relative(VERIFICATION_DATABASE_DIRECTORY, databasePath);
+    const outsideVerificationDirectory =
+      !relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath);
+    if (outsideVerificationDirectory) {
+      throw new Error(`検証モードでは.verification配下のDBだけを使用できます: ${databasePath}`);
+    }
   }
   return databasePath;
 }

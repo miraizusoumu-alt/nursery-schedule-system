@@ -225,6 +225,8 @@ test("creates only the active target month from child-specific base patterns wit
 test("rejects cross-family access, invalid times, and closed-day edits in both service and API paths", async () => {
   await withScheduleDatabase(async ({ service, authService, fixture }) => {
     const dashboard = service.dashboard(fixture.actorA);
+    assert.deepEqual(dashboard.children.map((child) => child.id), ["child-a1", "child-a2"]);
+    assert.ok(!dashboard.children.some((child) => child.id === "child-b1"));
     assert.throws(
       () => service.updateChildSchedule(fixture.actorA, "child-b1", { days: daysWithPatch(dashboard, "child-a1", "2026-09-01", { usageStatus: "off" }) }),
       (error) => error.code === "CHILD_SCOPE_VIOLATION",
@@ -236,6 +238,14 @@ test("rejects cross-family access, invalid times, and closed-day edits in both s
     assert.throws(
       () => service.updateChildSchedule(fixture.actorA, "child-a1", { days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "using", arrivalTime: "08:32", departureTime: "17:30" }) }),
       (error) => error.code === "INVALID_TIME",
+    );
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", { days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "using", arrivalTime: "06:55", departureTime: "17:30" }) }),
+      (error) => error.code === "OUTSIDE_OPENING_HOURS",
+    );
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", { days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "using", arrivalTime: "08:30", departureTime: "20:05" }) }),
+      (error) => error.code === "OUTSIDE_OPENING_HOURS",
     );
     assert.throws(
       () => service.updateChildSchedule(fixture.actorA, "child-a1", { days: daysWithPatch(dashboard, "child-a1", "2026-09-21", { usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" }) }),
@@ -254,6 +264,26 @@ test("rejects cross-family access, invalid times, and closed-day edits in both s
       body: JSON.stringify({ days: daysWithPatch(dashboard, "child-a1", "2026-09-01", { usageStatus: "off" }) }),
     }), { service, authService });
     assert.equal(response.status, 403);
+
+    const copyResponse = await handleFamilyScheduleApiRequest(
+      apiRequest("/api/family/schedule/copy-to-siblings", session, {
+        method: "POST",
+        body: { sourceChildId: "child-b1" },
+      }),
+      { service, authService },
+    );
+    assert.equal(copyResponse.status, 403);
+    assert.equal((await copyResponse.json()).code, "CHILD_SCOPE_VIOLATION");
+
+    const crossFamilySubmit = await handleFamilyScheduleApiRequest(
+      apiRequest("/api/family/schedule/submit", session, {
+        method: "POST",
+        body: { childId: "child-b1" },
+      }),
+      { service, authService },
+    );
+    assert.equal(crossFamilySubmit.status, 403);
+    assert.equal((await crossFamilySubmit.json()).code, "SUBMISSION_SCOPE_INVALID");
   });
 });
 
@@ -346,6 +376,11 @@ test("submits every child in one transaction, rolls back on failure, and records
     const firstRawSnapshot = rawSubmissionVersion(database, firstVersion.id);
 
     clock.value = new Date("2026-08-21T00:00:00.000Z");
+    service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    dashboard = service.dashboard(fixture.actorA);
     dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
       days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
     });
@@ -477,6 +512,11 @@ test("confirms the latest parent submission immutably and reconfirms only after 
     );
 
     clock.value = new Date("2026-08-21T00:00:00.000Z");
+    service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    dashboard = service.dashboard(fixture.actorA);
     dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
       days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
     });
@@ -541,6 +581,10 @@ test("confirms the latest parent submission immutably and reconfirms only after 
       submissionPeriodId: "period-2026-09",
       extendedDeadlineAt: "2026-08-27T14:59:59.000Z",
       reason: "再提出確認のための延長",
+    });
+    service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
     });
     service.submitFamilySchedules(fixture.actorA);
     const secondSubmitted = service.latestSubmittedVersion(fixture.actorA);
@@ -967,19 +1011,19 @@ test("rolls back an administrator revision when final audit logging fails", asyn
   });
 });
 
-test("uses Japan-time deadlines and blocks edits when the period is closed", async () => {
+test("does not lock drafts by deadline and keeps explicitly closed periods read-only", async () => {
   await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
     let dashboard = service.dashboard(fixture.actorA);
     assert.equal(dashboard.period.editable, true);
 
     clock.value = new Date("2026-08-25T15:00:00.000Z");
     dashboard = service.dashboard(fixture.actorA);
-    assert.equal(dashboard.period.editable, false);
-    assert.equal(dashboard.submission.displayStatus, "期限超過");
-    assert.throws(
-      () => service.updateChildSchedule(fixture.actorA, "child-a1", { days: daysWithPatch(dashboard, "child-a1", "2026-09-01", { usageStatus: "off" }) }),
-      (error) => error.code === "SUBMISSION_LOCKED",
-    );
+    assert.equal(dashboard.period.editable, true);
+    assert.equal(dashboard.submission.displayStatus, "未提出");
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboard, "child-a1", "2026-09-01", { usageStatus: "off" }),
+    });
+    assert.equal(dashboard.children.find((child) => child.id === "child-a1").schedule.days.find((day) => day.date === "2026-09-01").usageStatus, "off");
 
     clock.value = new Date("2026-08-20T00:00:00.000Z");
     database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-09'").run();
@@ -1012,6 +1056,14 @@ test("uses one access decision for global deadlines, family extensions, boundari
       () => service.updateChildSchedule(fixture.actorA, "child-a1", {
         days: daysWithPatch(dashboardA, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
       }),
+      (error) => error.code === "SUBMISSION_LOCKED",
+    );
+    assert.throws(
+      () => service.applyBasicUsagePattern(fixture.actorA, "child-a1"),
+      (error) => error.code === "SUBMISSION_LOCKED",
+    );
+    assert.throws(
+      () => service.copyChildScheduleToSiblings(fixture.actorA, "child-a1"),
       (error) => error.code === "SUBMISSION_LOCKED",
     );
     assert.throws(
@@ -1064,7 +1116,7 @@ test("uses one access decision for global deadlines, family extensions, boundari
     assert.equal(database.prepare(
       "SELECT COUNT(*) AS count FROM family_deadline_extensions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'",
     ).get().count, 1);
-    assert.equal(service.dashboard(fixture.actorA).period.editable, true);
+    assert.equal(service.dashboard(fixture.actorA).period.editable, false);
     service.setFamilyDeadlineExtension(fixture.actorAdmin, {
       familyId: "family-b",
       submissionPeriodId: "period-2026-09",
@@ -1076,6 +1128,10 @@ test("uses one access decision for global deadlines, family extensions, boundari
     assert.deepEqual(dashboardB.children.map((child) => child.id), ["child-b1"]);
 
     clock.value = new Date("2026-08-28T14:59:59.000Z");
+    service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
     dashboardA = service.dashboard(fixture.actorA);
     dashboardA = service.updateChildSchedule(fixture.actorA, "child-a1", {
       days: daysWithPatch(dashboardA, "child-a1", "2026-09-01", { usageStatus: "using", arrivalTime: "08:30", departureTime: "17:30" }),
@@ -1112,12 +1168,15 @@ test("uses one access decision for global deadlines, family extensions, boundari
   });
 });
 
-test("creates a new immutable submission version when resubmitting during a family extension", async () => {
+test("requires an administrator grant before creating a new immutable resubmission version", async () => {
   await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
     let dashboard = service.dashboard(fixture.actorA);
     dashboard = service.submitFamilySchedules(fixture.actorA);
     const firstVersion = service.latestSubmittedVersion(fixture.actorA);
     const firstSnapshot = rawSubmissionVersion(database, firstVersion.id);
+    const firstUsage = service.administratorScheduleDashboard(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).monthlyUsageSummaries.find((child) => child.childId === "child-a1");
 
     clock.value = new Date("2026-08-26T00:00:00.000Z");
     service.setFamilyDeadlineExtension(fixture.actorAdmin, {
@@ -1126,6 +1185,29 @@ test("creates a new immutable submission version when resubmitting during a fami
       extendedDeadlineAt: "2026-08-27T14:59:59.000Z",
       reason: "再提出のための延長",
     });
+    assert.throws(
+      () => service.updateChildSchedule(fixture.actorA, "child-a1", {
+        days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+      }),
+      (error) => error.code === "SUBMISSION_LOCKED",
+    );
+    assert.throws(() => service.applyBasicUsagePattern(fixture.actorA, "child-a1"), (error) => error.code === "SUBMISSION_LOCKED");
+    assert.throws(() => service.copyChildScheduleToSiblings(fixture.actorA, "child-a1"), (error) => error.code === "SUBMISSION_LOCKED");
+    assert.throws(
+      () => service.allowFamilyResubmission(fixture.actorA, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+      }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    const permission = service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(permission.submittedVersionId, firstVersion.id);
+    dashboard = service.dashboard(fixture.actorA);
+    assert.equal(dashboard.period.editable, true);
+    assert.equal(dashboard.submission.resubmissionAllowed, true);
     dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
       days: daysWithPatch(dashboard, "child-a1", "2026-09-02", { usageStatus: "off", arrivalTime: null, departureTime: null }),
     });
@@ -1143,10 +1225,87 @@ test("creates a new immutable submission version when resubmitting during a fami
     );
     assert.deepEqual(service.latestSubmittedVersion(fixture.actorA).id, secondVersion.id);
     assert.deepEqual(rawSubmissionVersion(database, firstVersion.id), firstSnapshot);
+    const resubmittedUsage = service.administratorScheduleDashboard(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).monthlyUsageSummaries.find((child) => child.childId === "child-a1");
+    assert.equal(resubmittedUsage.usageDays, firstUsage.usageDays - 1);
+    assert.equal(resubmittedUsage.totalMinutes, firstUsage.totalMinutes - (9 * 60));
+    const locked = service.dashboard(fixture.actorA);
+    assert.equal(locked.period.editable, false);
+    assert.equal(locked.submission.resubmissionAllowed, false);
+    assert.equal(database.prepare(
+      "SELECT resubmission_allowed_for_version_id FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'",
+    ).get().resubmission_allowed_for_version_id, null);
+    assert.throws(() => service.submitFamilySchedules(fixture.actorA), (error) => error.code === "SUBMISSION_LOCKED");
+    const grantLog = database.prepare(
+      "SELECT actor_id, detail_json FROM operation_logs WHERE operation = 'family_submission.resubmission_allowed'",
+    ).get();
+    assert.equal(grantLog.actor_id, fixture.actorAdmin.id);
+    assert.equal(JSON.parse(grantLog.detail_json).submittedVersionId, firstVersion.id);
   });
 });
 
-test("selects only the explicit parent target and switches it transactionally", async () => {
+test("starts an allowed resubmission from the current effective version and rolls back failed grants", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    service.dashboard(fixture.actorA);
+    service.submitFamilySchedules(fixture.actorA);
+    const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const submittedRaw = rawSubmissionVersion(database, submitted.id);
+    const preview = service.previewAdministratorRevision(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+      reason: "保護者からの連絡により修正",
+      changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "off" }],
+    });
+    const revision = service.createAdministratorRevision(fixture.actorAdmin, {
+      ...preview,
+      changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "off" }],
+    });
+    const revisionRaw = rawSubmissionVersion(database, revision.id);
+    const mutableBeforeGrant = mutableSchedulePayload(database, "family-a", "period-2026-09");
+
+    database.exec(`
+      CREATE TEMP TRIGGER fail_resubmission_grant_for_test
+      BEFORE INSERT ON operation_logs
+      WHEN NEW.operation = 'family_submission.resubmission_allowed'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced resubmission grant failure');
+      END
+    `);
+    assert.throws(
+      () => service.allowFamilyResubmission(fixture.actorAdmin, {
+        familyId: "family-a",
+        submissionPeriodId: "period-2026-09",
+      }),
+      /forced resubmission grant failure/,
+    );
+    assert.deepEqual(mutableSchedulePayload(database, "family-a", "period-2026-09"), mutableBeforeGrant);
+    assert.equal(database.prepare(
+      "SELECT resubmission_allowed_for_version_id FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-09'",
+    ).get().resubmission_allowed_for_version_id, null);
+    database.exec("DROP TRIGGER fail_resubmission_grant_for_test");
+
+    const grant = service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(grant.sourceVersionId, revision.id);
+    const dashboard = service.dashboard(fixture.actorA);
+    assert.equal(dashboard.children.find((child) => child.id === "child-a1")
+      .schedule.days.find((day) => day.date === "2026-09-02").usageStatus, "off");
+    assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
+    assert.deepEqual(rawSubmissionVersion(database, revision.id), revisionRaw);
+    assert.equal(service.allowFamilyResubmission(fixture.actorMaster, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    }).idempotent, true);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'family_submission.resubmission_allowed'",
+    ).get().count, 1);
+  });
+});
+
+test("uses the Tokyo suggested month by default and validates explicitly selected months", async () => {
   await withScheduleDatabase(async ({ database, service, fixture }) => {
     database.prepare(
       `INSERT INTO submission_periods
@@ -1156,15 +1315,22 @@ test("selects only the explicit parent target and switches it transactionally", 
 
     let dashboard = service.dashboard(fixture.actorA);
     assert.equal(dashboard.period.id, "period-2026-09");
-    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+    assert.throws(() => service.updateChildSchedule(fixture.actorA, "child-a1", {
       submissionPeriodId: "period-2026-10",
       days: daysWithPatch(dashboard, "child-a1", "2026-09-01", { usageStatus: "off", arrivalTime: null, departureTime: null }),
+    }), (error) => error.code === "INVALID_DATE");
+
+    dashboard = service.dashboard(fixture.actorA, { submissionPeriodId: "period-2026-10" });
+    assert.equal(dashboard.period.id, "period-2026-10");
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      submissionPeriodId: "period-2026-10",
+      days: daysWithPatch(dashboard, "child-a1", "2026-10-01", { usageStatus: "off", arrivalTime: null, departureTime: null }),
     });
-    assert.equal(dashboard.period.id, "period-2026-09");
+    assert.equal(dashboard.period.id, "period-2026-10");
     service.submitFamilySchedules(fixture.actorA, { submissionPeriodId: "period-2026-10" });
     assert.equal(database.prepare(
       "SELECT COUNT(*) AS count FROM family_submissions WHERE family_id = 'family-a' AND submission_period_id = 'period-2026-10'",
-    ).get().count, 0);
+    ).get().count, 1);
     assert.throws(
       () => service.setParentTargetPeriod(fixture.actorA, { submissionPeriodId: "period-2026-10" }),
       (error) => error.code === "FORBIDDEN",
@@ -1181,7 +1347,7 @@ test("selects only the explicit parent target and switches it transactionally", 
       { id: "period-2026-10", is_parent_target: 1 },
     ]);
     dashboard = service.dashboard(fixture.actorA);
-    assert.equal(dashboard.period.id, "period-2026-10");
+    assert.equal(dashboard.period.id, "period-2026-09");
     assert.equal(dashboard.period.editable, true);
 
     const operation = database.prepare(
@@ -1201,12 +1367,13 @@ test("selects only the explicit parent target and switches it transactionally", 
     });
 
     database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-10'").run();
-    dashboard = service.dashboard(fixture.actorA);
+    dashboard = service.dashboard(fixture.actorA, { submissionPeriodId: "period-2026-10" });
     assert.equal(dashboard.available, true);
     assert.equal(dashboard.period.id, "period-2026-10");
     assert.equal(dashboard.period.editable, false);
     assert.throws(
       () => service.updateChildSchedule(fixture.actorA, "child-a1", {
+        submissionPeriodId: "period-2026-10",
         days: daysWithPatch(dashboard, "child-a1", "2026-10-01", { usageStatus: "off", arrivalTime: null, departureTime: null }),
       }),
       (error) => error.code === "SUBMISSION_LOCKED",
@@ -1233,6 +1400,30 @@ test("selects only the explicit parent target and switches it transactionally", 
     assert.equal(database.prepare(
       "SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'submission_period.parent_target_changed'",
     ).get().count, 1);
+  });
+});
+
+test("switches the initially displayed month at midnight Japan time on the fifteenth", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture, clock }) => {
+    for (const [id, targetMonth] of [["period-2026-08", "2026-08"], ["period-2026-10", "2026-10"]]) {
+      database.prepare(
+        `INSERT INTO submission_periods
+         (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+         VALUES (?, ?, '2099-12-31T14:59:59.000Z', 'open', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ).run(id, targetMonth);
+    }
+
+    clock.value = new Date("2026-08-14T14:59:59.999Z");
+    assert.equal(service.dashboard(fixture.actorA).period.targetMonth, "2026-08");
+
+    clock.value = new Date("2026-08-14T15:00:00.000Z");
+    assert.equal(service.dashboard(fixture.actorA).period.targetMonth, "2026-09");
+
+    clock.value = new Date("2026-09-14T15:00:00.000Z");
+    assert.equal(service.dashboard(fixture.actorA).period.targetMonth, "2026-10");
+    const previousMonth = service.dashboard(fixture.actorA, { submissionPeriodId: "period-2026-09" });
+    assert.equal(previousMonth.period.targetMonth, "2026-09");
+    assert.equal(previousMonth.period.editable, true);
   });
 });
 
@@ -1376,6 +1567,10 @@ test("uses split child identity and inclusive enrollment periods consistently", 
            last_name_kana = 'サトウ', first_name_kana = 'ミライ'
        WHERE id = 'child-a1'`,
     ).run();
+    service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
     service.submitFamilySchedules(fixture.actorA);
     const secondSubmitted = service.latestSubmittedVersion(fixture.actorA);
     assert.equal(secondSubmitted.children.find((child) => child.childId === "child-a1").name, "佐藤 みらい");
@@ -1385,29 +1580,31 @@ test("uses split child identity and inclusive enrollment periods consistently", 
   });
 });
 
-test("does not choose a parent target when it is unavailable or duplicated", async () => {
+test("excludes draft months and safely supports multiple selectable parent months", async () => {
   await withScheduleDatabase(async ({ database, service, fixture }) => {
     database.prepare("UPDATE submission_periods SET status = 'draft' WHERE id = 'period-2026-09'").run();
     let dashboard = service.dashboard(fixture.actorA);
     assert.equal(dashboard.available, false);
-    assert.equal(dashboard.periodCount, 1);
+    assert.equal(dashboard.periodCount, 0);
 
     database.prepare("UPDATE submission_periods SET status = 'open', is_parent_target = 0 WHERE id = 'period-2026-09'").run();
     dashboard = service.dashboard(fixture.actorA);
-    assert.equal(dashboard.available, false);
-    assert.equal(dashboard.periodCount, 0);
+    assert.equal(dashboard.available, true);
+    assert.equal(dashboard.period.id, "period-2026-09");
 
-    // Reproduce an otherwise constrained corruption state only inside this disposable test database.
-    database.exec("DROP INDEX uq_submission_periods_single_parent_target");
-    database.prepare("UPDATE submission_periods SET is_parent_target = 1 WHERE id = 'period-2026-09'").run();
     database.prepare(
       `INSERT INTO submission_periods
        (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
-       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'open', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       VALUES ('period-2026-10', '2026-10', '2026-09-25T14:59:59.000Z', 'open', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     ).run();
     dashboard = service.dashboard(fixture.actorA);
-    assert.equal(dashboard.available, false);
-    assert.equal(dashboard.periodCount, 2);
+    assert.equal(dashboard.available, true);
+    assert.equal(dashboard.period.id, "period-2026-09");
+    assert.deepEqual(dashboard.periods.map((period) => period.targetMonth), ["2026-09", "2026-10"]);
+    assert.equal(service.dashboard(fixture.actorA, { submissionPeriodId: "period-2026-10" }).period.id, "period-2026-10");
+    const unavailable = service.dashboard(fixture.actorA, { submissionPeriodId: "period-other-family" });
+    assert.equal(unavailable.available, false);
+    assert.match(unavailable.message, /指定された利用予定月/);
   });
 });
 
@@ -1424,6 +1621,15 @@ test("connects administrator schedule APIs without exposing them to family sessi
     );
     assert.equal(forbidden.status, 403);
     assert.equal((await forbidden.json()).code, "FORBIDDEN");
+    const familyGrant = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/allow-resubmission", family, {
+        method: "POST",
+        body: { familyId: "family-a", submissionPeriodId: "period-2026-09" },
+      }),
+      { service, authService },
+    );
+    assert.equal(familyGrant.status, 403);
+    assert.equal((await familyGrant.json()).code, "FORBIDDEN");
 
     const missingCsrf = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/confirm", administrator, {
@@ -1449,6 +1655,24 @@ test("connects administrator schedule APIs without exposing them to family sessi
     assert.ok(!JSON.stringify(adminDashboard).toLowerCase().includes("birthdate"));
     assert.ok(!JSON.stringify(adminDashboard).toLowerCase().includes("kana"));
 
+    const forbiddenClosure = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/closure-day", family, {
+        method: "POST",
+        body: { submissionPeriodId: "period-2026-09", date: "2026-09-22" },
+      }),
+      { service, authService },
+    );
+    assert.equal(forbiddenClosure.status, 403);
+    const closureResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/closure-day", administrator, {
+        method: "POST",
+        body: { submissionPeriodId: "period-2026-09", date: "2026-09-22" },
+      }),
+      { service, authService },
+    );
+    assert.equal(closureResponse.status, 201);
+    assert.equal((await closureResponse.json()).result.name, "休園日");
+
     const extensionResponse = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/deadline-extension", administrator, {
         method: "PUT",
@@ -1463,8 +1687,9 @@ test("connects administrator schedule APIs without exposing them to family sessi
     );
     assert.equal(extensionResponse.status, 200);
     const parentWithExtension = service.dashboard(fixture.actorA);
-    assert.equal(parentWithExtension.period.extensionActive, true);
-    assert.equal(parentWithExtension.period.deadlineSource, "family_extension");
+    assert.equal(parentWithExtension.period.extensionActive, false);
+    assert.equal(parentWithExtension.period.deadlineSource, null);
+    assert.equal(parentWithExtension.period.editable, false);
 
     const confirmResponse = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/confirm", administrator, {
@@ -1573,6 +1798,15 @@ test("connects administrator schedule APIs without exposing them to family sessi
     assert.equal(crossFamilyPreview.status, 403);
     assert.equal((await crossFamilyPreview.json()).code, "CHILD_SCOPE_VIOLATION");
 
+    const grantResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/allow-resubmission", administrator, {
+        method: "POST",
+        body: { familyId: "family-a", submissionPeriodId: "period-2026-09" },
+      }),
+      { service, authService },
+    );
+    assert.equal(grantResponse.status, 200);
+    assert.equal(service.dashboard(fixture.actorA).submission.resubmissionAllowed, true);
     service.submitFamilySchedules(fixture.actorA);
     assert.equal(service.dashboard(fixture.actorA).submission.schoolModified, false);
     const versionCount = database.prepare(
@@ -1583,23 +1817,20 @@ test("connects administrator schedule APIs without exposing them to family sessi
 });
 
 test("creates and updates child profiles without changing immutable submission snapshots", async () => {
-  await withScheduleDatabase(async ({ database, service, fixture }) => {
+  await withScheduleDatabase(async ({ database, service, authService, fixture }) => {
     const legacy = service.administratorChildManagement(fixture.actorAdmin).children.find((child) => child.id === "child-a1");
     assert.equal(legacy.name, "架空園児A1");
     assert.equal(legacy.lastName, null);
 
     const createdManagement = service.createChild(fixture.actorAdmin, {
-      familyId: "family-a",
       lastName: "未来",
       firstName: "花子",
-      lastNameKana: "ミライ",
-      firstNameKana: "ハナコ",
+      lastNameKana: "みらい",
+      firstNameKana: "はなこ",
       className: "架空組D",
       birthDate: "2025-05-01",
       enrollmentDate: "2026-09-01",
       withdrawalDate: "",
-      familyActiveFrom: "2026-09-01",
-      familyActiveTo: "",
       status: "enrolled",
     });
     const created = createdManagement.children.find((child) => child.lastName === "未来" && child.firstName === "花子");
@@ -1607,7 +1838,94 @@ test("creates and updates child profiles without changing immutable submission s
     const createdRaw = database.prepare("SELECT * FROM children WHERE id = ?").get(created.id);
     assert.equal(createdRaw.name, "未来 花子");
     assert.equal(createdRaw.kana, "ミライ ハナコ");
-    assert.equal(created.memberships[0].familyId, "family-a");
+    assert.deepEqual(created.memberships, []);
+
+    const issued = await authService.issueFamilyAccountForChild(fixture.actorAdmin, {
+      childId: created.id,
+      startDate: "2026-08-20",
+      activeFrom: "2099-01-01",
+      activeTo: "2099-12-31",
+    });
+    assert.match(issued.loginId, /^family-[0-9a-f]{12}$/);
+    assert.match(issued.temporaryPassword, /^[A-HJ-NP-Z2-9]{8}$/);
+    assert.deepEqual(issued.childNames, ["未来 花子"]);
+    assert.equal(issued.startDate, "2026-08-20");
+    const issuedAccount = database.prepare(
+      "SELECT password_hash FROM family_accounts WHERE family_id = ?",
+    ).get(issued.familyId);
+    assert.notEqual(issuedAccount.password_hash, issued.temporaryPassword);
+    assert.match(issuedAccount.password_hash, /^scrypt\$/);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM family_children WHERE family_id = ? AND child_id = ?",
+    ).get(issued.familyId, created.id).count, 1);
+    assert.deepEqual({ ...database.prepare(
+      "SELECT active_from, active_to FROM family_children WHERE family_id = ? AND child_id = ?",
+    ).get(issued.familyId, created.id) }, { active_from: "2026-09-01", active_to: null });
+    const issuedChild = service.administratorChildManagement(fixture.actorAdmin).children.find((child) => child.id === created.id);
+    assert.equal(issuedChild.memberships[0].hasAccount, true);
+    const issuedLogin = await authService.login({
+      scope: "family", loginId: issued.loginId, password: issued.temporaryPassword, source: "test-issued-family",
+    });
+    assert.equal(issuedLogin.actor.familyId, issued.familyId);
+    assert.equal(issuedLogin.actor.mustChangePassword, false);
+    assert.deepEqual(service.dashboard(issuedLogin.actor).children.map(({ name }) => name), ["未来 花子"]);
+
+    const siblingManagement = service.createChild(fixture.actorAdmin, {
+      lastName: "未来",
+      firstName: "次郎",
+      lastNameKana: "みらい",
+      firstNameKana: "じろう",
+      birthDate: "2025-08-01",
+      enrollmentDate: "2026-09-01",
+      withdrawalDate: "",
+      status: "enrolled",
+    });
+    const sibling = siblingManagement.children.find((child) => child.lastName === "未来" && child.firstName === "次郎");
+    assert.ok(sibling);
+    const linked = authService.linkChildToFamilyAccount(fixture.actorAdmin, {
+      childId: sibling.id,
+      familyId: issued.familyId,
+      activeFrom: "2099-01-01",
+      activeTo: "2099-12-31",
+    });
+    assert.equal(linked.familyId, issued.familyId);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM family_children WHERE family_id = ?",
+    ).get(issued.familyId).count, 2);
+    assert.deepEqual({ ...database.prepare(
+      "SELECT active_from, active_to FROM family_children WHERE family_id = ? AND child_id = ?",
+    ).get(issued.familyId, sibling.id) }, { active_from: "2026-09-01", active_to: null });
+
+    const rollbackManagement = service.createChild(fixture.actorAdmin, {
+      lastName: "安全",
+      firstName: "確認",
+      lastNameKana: "あんぜん",
+      firstNameKana: "かくにん",
+      birthDate: "2025-09-01",
+      enrollmentDate: "2026-09-01",
+      status: "enrolled",
+    });
+    const rollbackChild = rollbackManagement.children.find((child) => child.lastName === "安全" && child.firstName === "確認");
+    const familyCountBeforeFailure = database.prepare("SELECT COUNT(*) AS count FROM families").get().count;
+    const accountCountBeforeFailure = database.prepare("SELECT COUNT(*) AS count FROM family_accounts").get().count;
+    database.exec(`
+      CREATE TRIGGER fail_family_child_issue
+      BEFORE INSERT ON family_children
+      WHEN NEW.child_id = '${rollbackChild.id}'
+      BEGIN
+        SELECT RAISE(FAIL, 'forced family issue failure');
+      END
+    `);
+    await assert.rejects(
+      () => authService.issueFamilyAccountForChild(fixture.actorAdmin, {
+        childId: rollbackChild.id,
+        startDate: "2026-08-25",
+        activeFrom: "2026-09-01",
+      }),
+      /forced family issue failure/,
+    );
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM families").get().count, familyCountBeforeFailure);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM family_accounts").get().count, accountCountBeforeFailure);
 
     service.dashboard(fixture.actorA);
     service.submitFamilySchedules(fixture.actorA);
@@ -1619,8 +1937,8 @@ test("creates and updates child profiles without changing immutable submission s
       familyId: "family-a",
       lastName: "山田",
       firstName: "はると",
-      lastNameKana: "ヤマダ",
-      firstNameKana: "ハルト",
+      lastNameKana: "やまだ",
+      firstNameKana: "はると",
       className: "架空組A",
       birthDate: "2025-04-10",
       enrollmentDate: "2026-09-01",
@@ -1636,7 +1954,15 @@ test("creates and updates child profiles without changing immutable submission s
 
     assert.throws(
       () => service.createChild(fixture.actorAdmin, {
-        familyId: "family-a", lastName: "不正", firstName: "日付", lastNameKana: "フセイ", firstNameKana: "ヒヅケ",
+        familyId: "family-a", lastName: "片仮名", firstName: "入力", lastNameKana: "カタカナ", firstNameKana: "にゅうりょく",
+        birthDate: "2025-01-01", enrollmentDate: "2026-09-01", familyActiveFrom: "2026-09-01", status: "enrolled",
+      }),
+      (error) => error.code === "INVALID_KANA" && error.message.includes("全角ひらがな"),
+    );
+
+    assert.throws(
+      () => service.createChild(fixture.actorAdmin, {
+        familyId: "family-a", lastName: "不正", firstName: "日付", lastNameKana: "ふせい", firstNameKana: "ひづけ",
         birthDate: "2025-01-01", enrollmentDate: "2026-09-10", withdrawalDate: "2026-09-01",
         familyActiveFrom: "2026-09-10", familyActiveTo: "2026-09-01", status: "enrolled",
       }),
@@ -1645,7 +1971,7 @@ test("creates and updates child profiles without changing immutable submission s
     assert.throws(
       () => service.updateChild(fixture.actorAdmin, "child-a1", {
         originalFamilyId: "family-a", familyId: "family-b",
-        lastName: "山田", firstName: "はると", lastNameKana: "ヤマダ", firstNameKana: "ハルト",
+        lastName: "山田", firstName: "はると", lastNameKana: "やまだ", firstNameKana: "はると",
         birthDate: "2025-04-10", enrollmentDate: "2026-09-01", withdrawalDate: "2026-09-30",
         familyActiveFrom: "2026-09-15", familyActiveTo: "2026-09-20", status: "withdrawn",
       }),
@@ -1653,7 +1979,7 @@ test("creates and updates child profiles without changing immutable submission s
     );
     assert.throws(
       () => service.createChild(fixture.actorA, {
-        familyId: "family-a", lastName: "権限", firstName: "なし", lastNameKana: "ケンゲン", firstNameKana: "ナシ",
+        familyId: "family-a", lastName: "権限", firstName: "なし", lastNameKana: "けんげん", firstNameKana: "なし",
         birthDate: "2025-01-01", enrollmentDate: "2026-09-01", familyActiveFrom: "2026-09-01",
       }),
       (error) => error.code === "FORBIDDEN",
@@ -1678,58 +2004,60 @@ test("records Monday-to-Saturday basic patterns and applies them only by explici
     const patterns = [1, 2, 3, 4, 5, 6].map((weekday) => ({
       weekday,
       enabled: weekday <= 5,
-      arrivalTime: weekday <= 5 ? "09:00" : null,
-      departureTime: weekday <= 5 ? "16:00" : null,
+      arrivalTime: weekday <= 5 ? (weekday === 1 ? "07:00" : "09:00") : null,
+      departureTime: weekday <= 5 ? (weekday === 1 ? "20:00" : "16:00") : null,
     }));
-    const result = service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
-      reason: "架空の利用時間変更",
-      patterns,
-    });
+    const result = service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", { patterns });
     assert.equal(result.changed, true);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a1'").get().count, 5);
     const operation = database.prepare(
       "SELECT detail_json FROM operation_logs WHERE operation = 'basic_usage_pattern.changed' ORDER BY occurred_at DESC LIMIT 1",
     ).get();
-    assert.equal(JSON.parse(operation.detail_json).reason, "架空の利用時間変更");
+    assert.equal(JSON.parse(operation.detail_json).reason, "管理者変更");
+    const reloadedMondayPattern = service.administratorChildManagement(fixture.actorAdmin).children
+      .find((child) => child.id === "child-a1").patterns.find((pattern) => pattern.weekday === 1);
+    assert.deepEqual(reloadedMondayPattern, { weekday: 1, enabled: true, arrivalTime: "07:00", departureTime: "20:00" });
     assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
     assert.equal(database.prepare("SELECT arrival_time FROM daily_schedules WHERE id = ?").get(monday.id).arrival_time, "08:30");
     assert.equal(database.prepare("SELECT source FROM daily_schedules WHERE id = ?").get(monday.id).source, "daily");
 
     const beforeNoChange = database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a1'").get().count;
-    const noChange = service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", { reason: "同じ内容", patterns });
+    const noChange = service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", { patterns });
     assert.equal(noChange.changed, false);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a1'").get().count, beforeNoChange);
     assert.throws(
       () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
-        reason: "日曜日は対象外",
         patterns: [{ ...patterns[0], weekday: 0 }, ...patterns.slice(1)],
       }),
       (error) => error.code === "INVALID_WEEKDAY",
     );
     assert.throws(
       () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
-        reason: "開園時間外",
         patterns: patterns.map((pattern) => pattern.weekday === 1 ? { ...pattern, arrivalTime: "06:55" } : pattern),
       }),
       (error) => error.code === "OUTSIDE_OPENING_HOURS",
     );
     assert.throws(
       () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a1", {
-        reason: "5分単位ではない",
         patterns: patterns.map((pattern) => pattern.weekday === 1 ? { ...pattern, arrivalTime: "09:03" } : pattern),
       }),
       (error) => error.code === "INVALID_TIME",
     );
     assert.throws(
-      () => service.updateBasicUsagePatterns(fixture.actorA, "child-a1", { reason: "権限なし", patterns }),
+      () => service.updateBasicUsagePatterns(fixture.actorA, "child-a1", { patterns }),
       (error) => error.code === "FORBIDDEN",
     );
 
+    service.allowFamilyResubmission(fixture.actorAdmin, {
+      familyId: "family-a",
+      submissionPeriodId: "period-2026-09",
+    });
     dashboard = service.applyBasicUsagePattern(fixture.actorA, "child-a1");
     const applied = dashboard.children.find((child) => child.id === "child-a1").schedule.days;
-    assert.equal(applied.find((day) => day.date === "2026-09-07").arrivalTime, "09:00");
+    assert.equal(applied.find((day) => day.date === "2026-09-07").arrivalTime, "07:00");
     assert.equal(applied.find((day) => day.date === "2026-09-06").usageStatus, "closed");
     assert.equal(applied.find((day) => day.date === "2026-09-21").usageStatus, "closed");
+    assert.equal(applied.find((day) => day.date === "2026-09-21").closureName, "休園日");
     assert.deepEqual(rawSubmissionVersion(database, submitted.id), submittedRaw);
 
     service.updateChild(fixture.actorAdmin, "child-a2", {
@@ -1737,8 +2065,8 @@ test("records Monday-to-Saturday basic patterns and applies them only by explici
       familyId: "family-a",
       lastName: "未来",
       firstName: "次郎",
-      lastNameKana: "ミライ",
-      firstNameKana: "ジロウ",
+      lastNameKana: "みらい",
+      firstNameKana: "じろう",
       className: "架空組B",
       birthDate: "2025-03-01",
       enrollmentDate: "2026-09-10",
@@ -1769,7 +2097,6 @@ test("records Monday-to-Saturday basic patterns and applies them only by explici
     const beforePattern = database.prepare("SELECT * FROM basic_usage_patterns WHERE child_id = 'child-a2' ORDER BY weekday").all().map((row) => ({ ...row }));
     assert.throws(
       () => service.updateBasicUsagePatterns(fixture.actorAdmin, "child-a2", {
-        reason: "ロールバック確認",
         patterns: patterns.map((pattern) => ({ ...pattern, arrivalTime: pattern.enabled ? "09:30" : null })),
       }),
       /forced basic pattern audit failure/,
@@ -1779,6 +2106,105 @@ test("records Monday-to-Saturday basic patterns and applies them only by explici
       beforePattern,
     );
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM basic_usage_pattern_histories WHERE child_id = 'child-a2'").get().count, 0);
+  });
+});
+
+test("distinguishes hard closures from editable family cooperation days in schedules and counts", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    assert.throws(
+      () => service.saveClosureDay(fixture.actorA, { submissionPeriodId: "period-2026-09", date: "2026-09-22" }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    const saved = service.saveClosureDay(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+      date: "2026-09-22",
+    });
+    assert.equal(saved.name, "休園日");
+    assert.equal(database.prepare(
+      "SELECT name FROM closure_days WHERE submission_period_id = 'period-2026-09' AND date = '2026-09-22'",
+    ).get().name, "休園日");
+
+    const dashboard = service.dashboard(fixture.actorA);
+    const savedDay = dashboard.children.find((child) => child.id === "child-a1")
+      .schedule.days.find((day) => day.date === "2026-09-22");
+    const fixtureDay = dashboard.children.find((child) => child.id === "child-a1")
+      .schedule.days.find((day) => day.date === "2026-09-21");
+    assert.deepEqual(
+      { status: savedDay.usageStatus, label: savedDay.closureName, arrival: savedDay.arrivalTime, departure: savedDay.departureTime },
+      { status: "closed", label: "休園日", arrival: null, departure: null },
+    );
+    assert.equal(fixtureDay.closureName, "休園日");
+
+    const cooperation = service.saveClosureDay(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+      date: "2026-09-23",
+      dayType: "family_cooperation",
+    });
+    assert.deepEqual(
+      { name: cooperation.name, type: cooperation.type, parentInputAllowed: cooperation.parentInputAllowed },
+      { name: "家庭保育協力日", type: "family_cooperation", parentInputAllowed: true },
+    );
+    let cooperationDashboard = service.dashboard(fixture.actorA);
+    const cooperationDay = cooperationDashboard.children.find((child) => child.id === "child-a1")
+      .schedule.days.find((day) => day.date === "2026-09-23");
+    assert.equal(cooperationDay.closureName, "家庭保育協力日");
+    assert.equal(cooperationDay.locked, false);
+    cooperationDashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(cooperationDashboard, "child-a1", "2026-09-23", {
+        usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00",
+      }),
+    });
+    assert.equal(
+      cooperationDashboard.children.find((child) => child.id === "child-a1")
+        .schedule.days.find((day) => day.date === "2026-09-23").usageStatus,
+      "using",
+    );
+    service.submitFamilySchedules(fixture.actorA);
+    const exportData = service.administratorScheduleExportData(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    });
+    const cooperationDate = exportData.dates.find((day) => day.date === "2026-09-23");
+    assert.equal(cooperationDate.isClosure, false);
+    assert.equal(cooperationDate.closureName, "家庭保育協力日");
+    const submittedCooperationDay = exportData.children.find((child) => child.childId === "child-a1")
+      .days.find((day) => day.date === "2026-09-23");
+    assert.equal(submittedCooperationDay.usageStatus, "using");
+    database.prepare("UPDATE children SET birth_date = '2025-05-01' WHERE id = 'child-a1'").run();
+    database.prepare("UPDATE children SET birth_date = '2024-05-01' WHERE id = 'child-a2'").run();
+    database.prepare("UPDATE children SET birth_date = '2023-05-01' WHERE id = 'child-b1'").run();
+    assert.equal(service.administratorMonthlyHeadcount(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).days.find((day) => day.date === "2026-09-23").maximum > 0, true);
+
+    service.removeClosureDay(fixture.actorMaster, {
+      submissionPeriodId: "period-2026-09",
+      date: "2026-09-22",
+    });
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM closure_days WHERE submission_period_id = 'period-2026-09' AND date = '2026-09-22'",
+    ).get().count, 0);
+  });
+});
+
+test("lets administrators select any fiscal month without changing the parent target rule", async () => {
+  await withScheduleDatabase(async ({ service, fixture }) => {
+    const initial = service.administratorScheduleDashboard(fixture.actorAdmin);
+    assert.equal(initial.selectedTargetMonth, "2026-08");
+    assert.equal(initial.selectedPeriod, null);
+
+    const january = service.administratorScheduleDashboard(fixture.actorAdmin, { targetMonth: "2027-01" });
+    assert.equal(january.selectedPeriod, null);
+    assert.equal(january.selectedTargetMonth, "2027-01");
+    assert.deepEqual(january.monthlyUsageSummaries, []);
+
+    const september = service.administratorScheduleDashboard(fixture.actorAdmin, { targetMonth: "2026-09" });
+    assert.equal(september.selectedPeriod.id, "period-2026-09");
+    assert.equal(september.selectedTargetMonth, "2026-09");
+    assert.throws(
+      () => service.administratorScheduleDashboard(fixture.actorAdmin, { targetMonth: "2026-13" }),
+      (error) => error.code === "INVALID_TARGET_MONTH",
+    );
+    assert.equal(service.dashboard(fixture.actorA).period.targetMonth, "2026-09");
   });
 });
 
@@ -1825,7 +2251,7 @@ test("protects child-management APIs and connects explicit basic-pattern applica
   });
 });
 
-test("switches the parent target through the administrator API in one transaction", async () => {
+test("keeps the legacy parent-target switch transactional without overriding the Tokyo default month", async () => {
   await withScheduleDatabase(async ({ database, service, authService, fixture }) => {
     database.prepare(
       `INSERT INTO submission_periods
@@ -1848,7 +2274,95 @@ test("switches the parent target through the administrator API in one transactio
       { id: "period-2026-09", is_parent_target: 0 },
       { id: "period-2026-10", is_parent_target: 1 },
     ]);
-    assert.equal(service.dashboard(fixture.actorA).period.id, "period-2026-10");
+    assert.equal(service.dashboard(fixture.actorA).period.id, "period-2026-09");
+    assert.equal(service.dashboard(fixture.actorA, { submissionPeriodId: "period-2026-10" }).period.id, "period-2026-10");
+  });
+});
+
+test("aggregates the effective monthly schedule with fiscal-age groups and privacy-safe names", async () => {
+  await withScheduleDatabase(async ({ database, service, fixture }) => {
+    assert.throws(
+      () => service.administratorMonthlyHeadcount(fixture.actorAdmin, { submissionPeriodId: "period-2026-09" }),
+      (error) => error.code === "CHILD_PROFILE_INCOMPLETE" && error.message.includes("生年月日未設定"),
+    );
+
+    for (const [id, lastName, firstName, birthDate] of [
+      ["child-a1", "山田", "はると", "2025-04-02"],
+      ["child-a2", "佐藤", "みお", "2023-04-02"],
+      ["child-b1", "佐々木", "はると", "2024-04-02"],
+    ]) {
+      database.prepare(
+        `UPDATE children
+         SET name = ?, last_name = ?, first_name = ?, birth_date = ?
+         WHERE id = ?`,
+      ).run(`${lastName} ${firstName}`, lastName, firstName, birthDate, id);
+    }
+
+    let dashboard = service.dashboard(fixture.actorA);
+    dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
+      days: daysWithPatch(dashboard, "child-a1", "2026-09-01", {
+        usageStatus: "using",
+        arrivalTime: "09:00",
+        departureTime: "16:00",
+      }),
+    });
+    service.updateChildSchedule(fixture.actorA, "child-a2", {
+      days: daysWithPatch(dashboard, "child-a2", "2026-09-01", {
+        usageStatus: "using",
+        arrivalTime: "10:00",
+        departureTime: "15:00",
+      }),
+    });
+    service.submitFamilySchedules(fixture.actorA);
+
+    const headcount = service.administratorMonthlyHeadcount(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.deepEqual(headcount.ageGroups, ["0歳児", "1歳児", "2歳児"]);
+    const firstDay = headcount.days.find((day) => day.date === "2026-09-01");
+    assert.equal(firstDay.maximum, 2);
+    assert.deepEqual(firstDay.changes.map((change) => [change.time, change.before, change.after]), [
+      ["9:00", 0, 1],
+      ["10:00", 1, 2],
+      ["15:05", 2, 1],
+      ["16:05", 1, 0],
+    ]);
+    assert.deepEqual(firstDay.changes[0].byAgeGroup, { "0歳児": 1, "1歳児": 0, "2歳児": 0 });
+    assert.deepEqual(firstDay.changes[0].childNames, ["はると（山）"]);
+    assert.deepEqual(firstDay.changes[1].childNames, ["はると（山）", "みお"]);
+    assert.ok(!JSON.stringify(headcount).includes("はると（佐）"), "未提出園児は人数・園児名へ含めない");
+
+    const row1605 = headcount.rows.find((row) => row.time === "16:05");
+    assert.equal(row1605.counts[0], 0);
+    assert.deepEqual(firstDay.changes.find((change) => change.time === "16:05"), {
+      time: "16:05",
+      before: 1,
+      after: 0,
+      delta: -1,
+      byAgeGroup: { "0歳児": 0, "1歳児": 0, "2歳児": 0 },
+      childNames: [],
+    });
+    const closureIndex = headcount.dates.findIndex((date) => date.date === "2026-09-21");
+    assert.equal(headcount.days[closureIndex].status, "closed");
+    assert.ok(headcount.rows.every((row) => row.counts[closureIndex] === 0));
+
+    const adminDashboard = service.administratorScheduleDashboard(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+      familyId: "family-a",
+    });
+    assert.deepEqual(adminDashboard.latestSubmittedVersion.children.map((child) => child.name), ["はると", "みお"]);
+    const submittedSummary = adminDashboard.monthlyUsageSummaries.find((child) => child.childId === "child-a1");
+    assert.equal(submittedSummary.submissionStatus, "submitted");
+    assert.ok(submittedSummary.usageDays > 0);
+    assert.ok(submittedSummary.totalMinutes > 0);
+    assert.deepEqual(adminDashboard.monthlyUsageSummaries.find((child) => child.childId === "child-b1"), {
+      childId: "child-b1",
+      familyId: "family-b",
+      name: "はると（佐）",
+      submissionStatus: "unsubmitted",
+      usageDays: 0,
+      totalMinutes: 0,
+    });
   });
 });
 
@@ -1871,6 +2385,9 @@ test("exports the latest effective schedules as a valid two-sheet workbook", asy
     });
     service.submitFamilySchedules(fixture.actorA);
     const submitted = service.latestSubmittedVersion(fixture.actorA);
+    const submittedUsage = service.administratorScheduleDashboard(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).monthlyUsageSummaries.find((child) => child.childId === "child-a1");
     assert.equal(
       submitted.children.find((child) => child.childId === "child-a1").days.find((day) => day.date === "2026-09-02").usageStatus,
       "using",
@@ -1892,6 +2409,11 @@ test("exports the latest effective schedules as a valid two-sheet workbook", asy
       reason: preview.reason,
       changes: [{ childId: "child-a1", date: "2026-09-02", usageStatus: "off" }],
     });
+    const revisedUsage = service.administratorScheduleDashboard(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).monthlyUsageSummaries.find((child) => child.childId === "child-a1");
+    assert.equal(revisedUsage.usageDays, submittedUsage.usageDays - 1);
+    assert.equal(revisedUsage.totalMinutes, submittedUsage.totalMinutes - (9 * 60));
 
     database.prepare(
       "UPDATE children SET enrollment_date = '2026-09-10', withdrawal_date = '2026-09-20' WHERE id = 'child-a2'",
@@ -2046,7 +2568,8 @@ test("colors morning and afternoon headcounts at the specified boundaries", asyn
 });
 
 test("serves Excel downloads only to authenticated administrators", async () => {
-  await withScheduleDatabase(async ({ service, authService, fixture }) => {
+  await withScheduleDatabase(async ({ database, service, authService, fixture }) => {
+    database.prepare("UPDATE children SET birth_date = '2025-04-02' WHERE birth_date IS NULL").run();
     service.dashboard(fixture.actorA);
     service.submitFamilySchedules(fixture.actorA);
     const family = await familySession(authService, "demo-family-a", fixture.passwords.familyA);
@@ -2063,6 +2586,18 @@ test("serves Excel downloads only to authenticated administrators", async () => 
       { service, authService },
     );
     assert.equal(forbidden.status, 403);
+
+    const unauthenticatedHeadcount = await handleAdminScheduleApiRequest(
+      new Request("http://localhost/api/admin/schedules/headcount?submissionPeriodId=period-2026-09"),
+      { service, authService },
+    );
+    assert.equal(unauthenticatedHeadcount.status, 401);
+
+    const forbiddenHeadcount = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/headcount?submissionPeriodId=period-2026-09", family),
+      { service, authService },
+    );
+    assert.equal(forbiddenHeadcount.status, 403);
 
     const missing = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/export?submissionPeriodId=missing-period", administrator),
@@ -2083,5 +2618,13 @@ test("serves Excel downloads only to authenticated administrators", async () => 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()));
     assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), ["園児利用予定", "時間帯別人数"]);
+
+    const headcountResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/headcount?submissionPeriodId=period-2026-09", administrator),
+      { service, authService },
+    );
+    assert.equal(headcountResponse.status, 200);
+    const headcount = (await headcountResponse.json()).headcount;
+    assert.deepEqual(headcount.ageGroups, ["0歳児", "1歳児", "2歳児"]);
   });
 });

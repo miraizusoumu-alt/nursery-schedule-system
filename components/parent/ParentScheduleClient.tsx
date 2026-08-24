@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client/api";
-import { LogoutButton } from "@/components/auth/AuthClient";
 
 type UsageStatus = "using" | "off" | "closed" | "not_enrolled";
 type SaveState = "idle" | "saving" | "saved" | "failed";
@@ -35,16 +34,6 @@ type ScheduleChild = {
   };
 };
 
-type HistoryEntry = {
-  id: string;
-  childName: string | null;
-  targetDate: string | null;
-  fieldName: string | null;
-  reason: string;
-  changedAt: string;
-  after: unknown;
-};
-
 type AvailableDashboard = {
   available: true;
   family: { id: string; displayName: string };
@@ -54,7 +43,7 @@ type AvailableDashboard = {
     deadlineAt: string;
     globalDeadlineAt: string | null;
     effectiveDeadlineAt: string | null;
-    deadlineSource: "submission_period" | "family_extension";
+    deadlineSource: null;
     extensionActive: boolean;
     status: "open" | "closed";
     editable: boolean;
@@ -67,21 +56,31 @@ type AvailableDashboard = {
     submittedAt: string | null;
     lastUpdatedAt: string;
     revisionRequired: boolean;
+    resubmissionAllowed: boolean;
     schoolModified: boolean;
     schoolModifiedAt: string | null;
   };
   children: ScheduleChild[];
-  history: HistoryEntry[];
+  periods: Array<{ id: string; targetMonth: string; status: "open" | "closed"; selected: boolean }>;
+  suggestedTargetMonth: string;
 };
 
 type UnavailableDashboard = {
   available: false;
   message: string;
   periodCount: number;
-  periods: Array<{ targetMonth: string; status: string }>;
+  periods: Array<{ id: string; targetMonth: string; status: string }>;
 };
 
 type Dashboard = AvailableDashboard | UnavailableDashboard;
+
+type ConfirmationState = {
+  title: string;
+  description: string[];
+  confirmLabel: string;
+  cancelLabel?: string;
+  action: () => void | Promise<void>;
+};
 
 const weekdayLabels = ["日", "月", "火", "水", "木", "金", "土"];
 const bulkWeekdays = [
@@ -111,7 +110,8 @@ function timeToMinutes(value: string | null) {
   if (!value || !/^\d{2}:\d{2}$/.test(value)) return null;
   const [hours, minutes] = value.split(":").map(Number);
   if (!Number.isInteger(hours) || !Number.isInteger(minutes) || minutes % 5 !== 0) return null;
-  return hours * 60 + minutes;
+  const total = hours * 60 + minutes;
+  return total >= 7 * 60 && total <= 20 * 60 ? total : null;
 }
 
 function validateDay(day: ScheduleDay) {
@@ -138,44 +138,14 @@ function formatDate(value: string) {
   return `${Number(month)}/${Number(day)}（${weekday}）`;
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) return "未記録";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "未記録";
-  return new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 function usageLabel(day: ScheduleDay) {
-  if (day.usageStatus === "closed") return day.closureName ?? "休園日";
+  if (day.usageStatus === "closed") return "休園日";
   if (day.usageStatus === "not_enrolled") return "在園期間外";
   return day.usageStatus === "using" ? "利用" : "休み";
 }
 
-function dayTimeLabel(day: ScheduleDay) {
-  return day.usageStatus === "using" ? `${day.arrivalTime ?? "--:--"} - ${day.departureTime ?? "--:--"}` : "-";
-}
-
-function childStats(child: ScheduleChild) {
-  const editableDays = child.schedule.days.filter((day) => !day.locked);
-  const useDays = editableDays.filter((day) => day.usageStatus === "using");
-  const changedDays = editableDays.filter((day) => day.changed);
-  const invalidDays = editableDays.filter((day) => validateDay(day));
-  return {
-    useDays: useDays.length,
-    changedDays: changedDays.length,
-    invalidDays: invalidDays.length,
-  };
-}
-
 function dashboardWithRevision(current: AvailableDashboard): AvailableDashboard {
-  if (current.submission.status !== "submitted") return current;
+  if (current.submission.status !== "submitted" || !current.submission.resubmissionAllowed) return current;
   return {
     ...current,
     submission: {
@@ -197,6 +167,68 @@ function payloadDay(day: ScheduleDay) {
   };
 }
 
+function ConfirmationDialog({
+  confirmation,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  confirmation: ConfirmationState;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    confirmButtonRef.current?.focus();
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) onCancel();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onCancel]);
+
+  return (
+    <div className="parent-dialog-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) onCancel();
+    }}>
+      <section
+        className="parent-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="parent-confirm-title"
+        aria-describedby="parent-confirm-description"
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          if (event.shiftKey && document.activeElement === cancelButtonRef.current) {
+            event.preventDefault();
+            confirmButtonRef.current?.focus();
+          } else if (!event.shiftKey && document.activeElement === confirmButtonRef.current) {
+            event.preventDefault();
+            cancelButtonRef.current?.focus();
+          }
+        }}
+      >
+        <div>
+          <span className="parent-eyebrow">内容をご確認ください</span>
+          <h2 id="parent-confirm-title">{confirmation.title}</h2>
+        </div>
+        <div id="parent-confirm-description" className="parent-dialog-description">
+          {confirmation.description.map((line) => <p key={line}>{line}</p>)}
+        </div>
+        <div className="parent-dialog-actions">
+          <button ref={cancelButtonRef} type="button" disabled={busy} onClick={onCancel}>{confirmation.cancelLabel ?? "キャンセル"}</button>
+          <button ref={confirmButtonRef} type="button" className="primary" disabled={busy} onClick={onConfirm}>
+            {busy ? "処理しています..." : confirmation.confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function ParentScheduleClient() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [selectedChildId, setSelectedChildId] = useState("");
@@ -206,10 +238,26 @@ export function ParentScheduleClient() {
   const [bulkEnabled, setBulkEnabled] = useState(true);
   const [bulkArrival, setBulkArrival] = useState("08:30");
   const [bulkDeparture, setBulkDeparture] = useState("17:30");
+  const [weekdayBulkOpen, setWeekdayBulkOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [completionMessage, setCompletionMessage] = useState("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveVersionRef = useRef(0);
-  const pendingSaveRef = useRef<{ childId: string; days: ScheduleDay[]; version: number } | null>(null);
+  const pendingSaveRef = useRef<{ childId: string; submissionPeriodId: string; days: ScheduleDay[]; version: number } | null>(null);
+  const confirmationTriggerRef = useRef<HTMLElement | null>(null);
+
+  async function loadDashboard(submissionPeriodId = "") {
+    const query = submissionPeriodId ? `?submissionPeriodId=${encodeURIComponent(submissionPeriodId)}` : "";
+    const result = await api<{ dashboard: Dashboard }>(`/api/family/schedule${query}`);
+    setData(result.dashboard);
+    setSelectedChildId("");
+    setSaveState("idle");
+    setMessage("");
+    setCompletionMessage("");
+  }
 
   useEffect(() => {
     let active = true;
@@ -231,13 +279,28 @@ export function ParentScheduleClient() {
     return data.children.find((child) => child.id === selectedChildId) ?? data.children[0] ?? null;
   }, [data, selectedChildId]);
 
-  const currentStats = currentChild ? childStats(currentChild) : null;
-  const allStats = useMemo(() => {
-    if (!isAvailableDashboard(data)) return [];
-    return data.children.map((child) => ({ child, stats: childStats(child) }));
-  }, [data]);
+  function openConfirmation(nextConfirmation: ConfirmationState) {
+    confirmationTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setConfirmation(nextConfirmation);
+  }
 
-  async function performSave(payload: { childId: string; days: ScheduleDay[]; version: number }) {
+  function closeConfirmation() {
+    setConfirmation(null);
+    setConfirming(false);
+    window.setTimeout(() => confirmationTriggerRef.current?.focus(), 0);
+  }
+
+  async function runConfirmedAction() {
+    if (!confirmation || confirming) return;
+    setConfirming(true);
+    try {
+      await confirmation.action();
+    } finally {
+      closeConfirmation();
+    }
+  }
+
+  async function performSave(payload: { childId: string; submissionPeriodId: string; days: ScheduleDay[]; version: number }) {
     const validation = validateDays(payload.days);
     if (validation) {
       setSaveState("failed");
@@ -248,13 +311,15 @@ export function ParentScheduleClient() {
     try {
       const result = await api<{ dashboard: Dashboard }>(`/api/family/schedule/children/${encodeURIComponent(payload.childId)}`, {
         method: "PUT",
-        body: { days: payload.days.map(payloadDay) },
+        body: { submissionPeriodId: payload.submissionPeriodId, days: payload.days.map(payloadDay) },
       });
       if (payload.version === saveVersionRef.current) {
         pendingSaveRef.current = null;
         setData(result.dashboard);
         setSaveState("saved");
-        setMessage("保存しました。提出済みの内容を修正した場合は再提出してください。");
+        setMessage(result.dashboard.available && result.dashboard.submission.resubmissionAllowed
+          ? "入力内容を保存しました。園へ反映するには再提出してください。"
+          : "入力内容を保存しました。");
       }
       return true;
     } catch (error) {
@@ -267,8 +332,9 @@ export function ParentScheduleClient() {
   }
 
   function queueAutosave(childId: string, days: ScheduleDay[]) {
+    if (!isAvailableDashboard(data)) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    const payload = { childId, days, version: saveVersionRef.current + 1 };
+    const payload = { childId, submissionPeriodId: data.period.id, days, version: saveVersionRef.current + 1 };
     saveVersionRef.current = payload.version;
     pendingSaveRef.current = payload;
     setSaveState("saving");
@@ -287,12 +353,9 @@ export function ParentScheduleClient() {
     return performSave(pending);
   }
 
-  function prepareEdit() {
+  function requestEdit(action: () => void) {
     if (!isAvailableDashboard(data) || !data.period.editable) return false;
-    if (data.submission.status === "submitted") {
-      const ok = window.confirm("提出済み内容を修正します。修正後は再提出が必要です。よろしいですか？");
-      if (!ok) return false;
-    }
+    action();
     return true;
   }
 
@@ -317,26 +380,28 @@ export function ParentScheduleClient() {
   }
 
   function updateDay(date: string, patch: Partial<ScheduleDay>) {
-    if (!currentChild || !prepareEdit()) return;
-    const nextDays = currentChild.schedule.days.map((day) => {
-      if (day.date !== date || day.locked) return day;
-      const nextStatus = patch.usageStatus ?? day.usageStatus;
-      const next: ScheduleDay = {
-        ...day,
-        ...patch,
-        usageStatus: nextStatus,
-        arrivalTime: nextStatus === "using" ? (patch.arrivalTime ?? day.arrivalTime ?? "08:30") : null,
-        departureTime: nextStatus === "using" ? (patch.departureTime ?? day.departureTime ?? "17:30") : null,
-        changed: true,
-        source: "parent",
-      };
-      return next;
+    if (!currentChild) return;
+    requestEdit(() => {
+      const nextDays = currentChild.schedule.days.map((day) => {
+        if (day.date !== date || day.locked) return day;
+        const nextStatus = patch.usageStatus ?? day.usageStatus;
+        const next: ScheduleDay = {
+          ...day,
+          ...patch,
+          usageStatus: nextStatus,
+          arrivalTime: nextStatus === "using" ? (patch.arrivalTime ?? day.arrivalTime ?? "08:30") : null,
+          departureTime: nextStatus === "using" ? (patch.departureTime ?? day.departureTime ?? "17:30") : null,
+          changed: true,
+          source: "parent",
+        };
+        return next;
+      });
+      replaceCurrentChildDays(nextDays, `${formatDate(date)}の予定を自動保存しています。`);
     });
-    replaceCurrentChildDays(nextDays, `${formatDate(date)}の予定を自動保存しています。`);
   }
 
   function applyWeekdayBulk() {
-    if (!currentChild || !prepareEdit()) return;
+    if (!currentChild) return;
     if (bulkEnabled) {
       const arrival = timeToMinutes(bulkArrival);
       const departure = timeToMinutes(bulkDeparture);
@@ -346,60 +411,54 @@ export function ParentScheduleClient() {
         return;
       }
     }
-    const nextDays = currentChild.schedule.days.map((day) => {
-      if (day.weekday !== bulkWeekday || day.locked) return day;
-      return {
-        ...day,
-        usageStatus: bulkEnabled ? "using" as const : "off" as const,
-        arrivalTime: bulkEnabled ? bulkArrival : null,
-        departureTime: bulkEnabled ? bulkDeparture : null,
-        changed: true,
-        source: "parent",
-      };
-    });
-    replaceCurrentChildDays(nextDays, `${bulkWeekdays.find((item) => item.value === bulkWeekday)?.label ?? "曜日"}の予定を自動保存しています。`);
-  }
-
-  async function applyBasicPattern() {
-    if (!isAvailableDashboard(data) || !currentChild || !prepareEdit()) return;
-    const ok = window.confirm("園に登録されている基本予定を反映します。現在の入力内容は上書きされます。よろしいですか？");
-    if (!ok) return;
-    const saved = await flushAutosave();
-    if (!saved) return;
-    setSaveState("saving");
-    try {
-      const result = await api<{ dashboard: Dashboard }>("/api/family/schedule/apply-basic-pattern", {
-        method: "POST",
-        body: { childId: currentChild.id },
+    requestEdit(() => {
+      const nextDays = currentChild.schedule.days.map((day) => {
+        if (day.weekday !== bulkWeekday || day.locked) return day;
+        return {
+          ...day,
+          usageStatus: bulkEnabled ? "using" as const : "off" as const,
+          arrivalTime: bulkEnabled ? bulkArrival : null,
+          departureTime: bulkEnabled ? bulkDeparture : null,
+          changed: true,
+          source: "parent",
+        };
       });
-      setData(result.dashboard);
-      setSaveState("saved");
-      setMessage("基本予定を反映しました。休園日と在籍期間外の日付は変更していません。");
-    } catch (error) {
-      setSaveState("failed");
-      setMessage(error instanceof Error ? error.message : "基本予定を反映できませんでした。");
-    }
+      replaceCurrentChildDays(nextDays, `${bulkWeekdays.find((item) => item.value === bulkWeekday)?.label ?? "曜日"}の予定を自動保存しています。`);
+    });
   }
 
   async function copyToSiblings() {
-    if (!isAvailableDashboard(data) || !currentChild || !prepareEdit()) return;
-    const ok = window.confirm("この子の予定を兄弟姉妹にも反映します。兄弟姉妹の既存入力は上書きされます。よろしいですか？");
-    if (!ok) return;
+    if (!isAvailableDashboard(data) || !currentChild || !data.period.editable) return;
     const saved = await flushAutosave();
     if (!saved) return;
     setSaveState("saving");
     try {
       const result = await api<{ dashboard: Dashboard }>("/api/family/schedule/copy-to-siblings", {
         method: "POST",
-        body: { sourceChildId: currentChild.id },
+        body: { sourceChildId: currentChild.id, submissionPeriodId: data.period.id },
       });
       setData(result.dashboard);
       setSaveState("saved");
-      setMessage("兄弟姉妹へ反映しました。必要に応じて園児ごとに個別修正できます。");
+      setMessage("きょうだいへコピーしました。必要に応じてお子さまごとに個別修正できます。");
     } catch (error) {
       setSaveState("failed");
-      setMessage(error instanceof Error ? error.message : "兄弟姉妹へ反映できませんでした。");
+      setMessage(error instanceof Error ? error.message : "きょうだいへコピーできませんでした。");
     }
+  }
+
+  function requestSiblingCopy() {
+    if (!isAvailableDashboard(data) || !currentChild || !data.period.editable || data.children.length < 2) return;
+    const siblingNames = data.children.filter((child) => child.id !== currentChild.id).map((child) => child.name).join("、");
+    openConfirmation({
+      title: "この予定をきょうだいにもコピーしますか？",
+      description: [
+        `${currentChild.name}さんの予定を、${siblingNames}さんへコピーします。`,
+        "コピー先で現在入力している内容は上書きされます。コピー後も、お子さまごとに修正できます。",
+        ...(data.submission.resubmissionAllowed ? ["コピー後は、園へもう一度提出してください。"] : []),
+      ],
+      confirmLabel: "きょうだいにもコピーする",
+      action: copyToSiblings,
+    });
   }
 
   async function submitFamily() {
@@ -412,14 +471,15 @@ export function ParentScheduleClient() {
     }
     const saved = await flushAutosave();
     if (!saved) return;
-    const ok = window.confirm(data.submission.submittedAt ? "家庭内の全園児分を再提出します。提出日時が更新されます。" : "家庭内の全園児分をまとめて提出します。");
-    if (!ok) return;
     setSubmitting(true);
     try {
-      const result = await api<{ dashboard: Dashboard }>("/api/family/schedule/submit", { method: "POST", body: {} });
+      const result = await api<{ dashboard: Dashboard }>("/api/family/schedule/submit", { method: "POST", body: { submissionPeriodId: data.period.id } });
       setData(result.dashboard);
       setSaveState("saved");
-      setMessage(data.submission.submittedAt ? "再提出しました。" : "提出しました。");
+      const wasResubmission = data.submission.resubmissionAllowed;
+      setMessage("");
+      setCompletionMessage(`✓ ${formatMonth(data.period.targetMonth)}の利用予定を${wasResubmission ? "再提出" : "提出"}しました`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
       setSaveState("failed");
       setMessage(error instanceof Error ? error.message : "提出できませんでした。");
@@ -428,20 +488,56 @@ export function ParentScheduleClient() {
     }
   }
 
+  function requestFamilySubmission() {
+    if (!isAvailableDashboard(data) || !data.period.editable) return;
+    openConfirmation({
+      title: data.submission.resubmissionAllowed ? "修正した内容を園へ再提出しますか？" : "この内容で園へ提出しますか？",
+      description: [
+        "提出後は、ご自身で予定を変更できません。",
+        "変更が必要な場合は、園へLINEまたは直接ご連絡ください。",
+        "入力内容を確認してから提出してください。",
+      ],
+      confirmLabel: data.submission.resubmissionAllowed ? "この内容で園へ再提出する" : "この内容で園へ提出する",
+      cancelLabel: "戻って確認する",
+      action: submitFamily,
+    });
+  }
+
+  async function logout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await api("/api/auth/logout", { method: "POST", body: {} });
+      window.location.assign("/");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "ログアウトできませんでした。");
+      setSaveState("failed");
+      setLoggingOut(false);
+    }
+  }
+
   if (message && !data) return <p className="auth-message error">{message}</p>;
   if (!data) return <p className="auth-message info">予定を確認中...</p>;
 
   if (!isAvailableDashboard(data)) {
+    const hasSelectablePeriods = data.periods.length > 0;
     return (
       <div className="parent-schedule">
         <section className="parent-schedule-panel important">
-          <span className="parent-eyebrow">提出対象月を確認できません</span>
-          <h2>園の設定確認が必要です</h2>
+          <span className="parent-eyebrow">利用予定</span>
+          <h2>{hasSelectablePeriods ? "確認する月を選んでください" : "園の設定確認が必要です"}</h2>
           <p>{data.message}</p>
-          {data.periods.length ? (
-            <ul className="parent-mini-list">
-              {data.periods.map((period) => <li key={period.targetMonth}>{formatMonth(period.targetMonth)} / {period.status}</li>)}
-            </ul>
+          {hasSelectablePeriods ? (
+            <label className="parent-month-select">
+              <span>確認する月</span>
+              <select defaultValue="" onChange={(event) => {
+                const periodId = event.currentTarget.value;
+                if (periodId) void loadDashboard(periodId);
+              }}>
+                <option value="" disabled>月を選択</option>
+                {data.periods.map((period) => <option key={period.id} value={period.id}>{formatMonth(period.targetMonth)}</option>)}
+              </select>
+            </label>
           ) : null}
         </section>
       </div>
@@ -449,105 +545,133 @@ export function ParentScheduleClient() {
   }
 
   const readonly = !data.period.editable;
-  const saveLabel = saveState === "saving" ? "保存中" : saveState === "saved" ? "保存済み" : saveState === "failed" ? "保存失敗" : "待機中";
+  const saveLabel = saveState === "saving" ? "保存しています" : saveState === "saved" ? "入力内容を保存しました" : saveState === "failed" ? "保存できませんでした" : "入力待ち";
 
   return (
     <div className="parent-schedule">
       <section className="parent-schedule-hero">
         <div>
-          <span className="parent-eyebrow">{data.family.displayName}</span>
+          <span className="parent-eyebrow">利用予定</span>
           <h2>{formatMonth(data.period.targetMonth)}の利用予定</h2>
         </div>
-        <LogoutButton />
+        <label className="parent-month-select">
+          <span>確認する月</span>
+          <select value={data.period.id} disabled={saveState === "saving"} onChange={(event) => {
+            const periodId = event.currentTarget.value;
+            void flushAutosave().then((saved) => {
+              if (saved) return loadDashboard(periodId);
+            }).catch((error) => {
+              setSaveState("failed");
+              setMessage(error instanceof Error ? error.message : "対象月を切り替えられませんでした。");
+            });
+          }}>
+            {data.periods.map((period) => <option key={period.id} value={period.id}>{formatMonth(period.targetMonth)}</option>)}
+          </select>
+        </label>
       </section>
 
-      <section className="parent-status-grid" aria-label="提出状態">
+      {completionMessage ? <section className="parent-submission-complete" role="status"><strong>{completionMessage}</strong><span>提出後の変更は、園へLINEまたは直接ご連絡ください。</span></section> : null}
+
+      <section className="parent-status-summary" aria-label="提出状態">
         <div>
-          <span>提出状態</span>
+          <span>状態</span>
           <strong className={`parent-status ${readonly ? "locked" : data.submission.revisionRequired ? "editing" : data.submission.status}`}>{data.submission.displayStatus}</strong>
-        </div>
-        <div>
-          <span>提出日時</span>
-          <strong>{formatDateTime(data.submission.submittedAt)}</strong>
-        </div>
-        <div>
-          <span>最終更新日時</span>
-          <strong>{formatDateTime(data.submission.lastUpdatedAt)}</strong>
-        </div>
-        <div>
-          <span>自動保存</span>
-          <strong className={`parent-save-state ${saveState}`}>{saveLabel}</strong>
-        </div>
-        <div>
-          <span>{data.period.deadlineSource === "family_extension" ? "延長後の提出期限" : "提出期限"}</span>
-          <strong>{formatDateTime(data.period.effectiveDeadlineAt ?? data.period.deadlineAt)}</strong>
         </div>
       </section>
 
       {readonly ? <p className="auth-message info">{data.period.lockMessage}</p> : null}
-      {data.period.extensionActive ? <p className="auth-message info">園から提出期限が延長されています。延長後の期限まで編集・再提出できます。</p> : null}
+      {data.submission.resubmissionAllowed ? <p className="auth-message info">園から再提出が許可されています。予定を修正し、もう一度提出してください。</p> : null}
       {data.submission.schoolModified ? <p className="auth-message info">提出後、園で予定を変更しています。詳しくは園へお問い合わせください。</p> : null}
       {message ? <p className={`auth-message ${saveState === "failed" ? "error" : "info"}`} role={saveState === "failed" ? "alert" : "status"}>{message}</p> : null}
 
-      <nav className="child-switcher" aria-label="園児切替">
-        {data.children.map((child) => {
-          const stats = childStats(child);
-          return (
-            <button key={child.id} type="button" className={child.id === currentChild?.id ? "active" : ""} onClick={() => setSelectedChildId(child.id)}>
-              <strong>{child.name}</strong>
-              <span>{stats.useDays}日利用 / 変更{stats.changedDays}日</span>
-            </button>
-          );
-        })}
-      </nav>
+      <section className="parent-schedule-panel parent-child-selector">
+        <div className="parent-section-title">
+          <div>
+            <span className="parent-eyebrow">このご家庭のお子さま</span>
+            <h2>入力するお子さま</h2>
+          </div>
+        </div>
+        <p className="parent-section-description">ログイン中のご家庭に登録されているお子さまだけが表示されます。</p>
+        {data.children.length > 1 ? (
+          <nav className="child-switcher" aria-label="入力するお子さま">
+            {data.children.map((child) => (
+              <button key={child.id} type="button" className={child.id === currentChild?.id ? "active" : ""} aria-pressed={child.id === currentChild?.id} onClick={() => setSelectedChildId(child.id)}>
+                <strong>{child.name}</strong>
+              </button>
+            ))}
+          </nav>
+        ) : currentChild ? (
+          <div className="parent-single-child">
+            <strong>{currentChild.name}</strong>
+            <span>このお子さまの予定を入力します。</span>
+          </div>
+        ) : null}
+      </section>
 
       {currentChild ? (
         <>
-          <section className="parent-schedule-panel current-child">
-            <span className="parent-eyebrow">現在編集中</span>
-            <h2>{currentChild.name}</h2>
-            <div className="child-meta-row">
-              <span>{currentChild.className || currentChild.childCode}</span>
-              <span>{currentStats?.useDays ?? 0}日利用</span>
-              <span>{currentStats?.changedDays ?? 0}日変更</span>
+          {!readonly ? <section className="parent-autosave-note" aria-label="入力内容の保存について">
+            <div>
+              <strong>入力内容は自動で保存されます</strong>
+              <span className={`parent-save-state ${saveState}`}>{saveLabel}</span>
             </div>
-          </section>
+            <p>途中で画面を閉じても、入力した内容は残ります。園への提出は、入力後に「{data.submission.resubmissionAllowed ? "この内容で園へ再提出する" : "この内容で園へ提出する"}」を押してください。</p>
+          </section> : null}
 
-          <section className="parent-schedule-panel">
-            <div className="parent-section-title">
-              <div>
-                <span className="parent-eyebrow">対象月だけに反映</span>
-                <h2>曜日ごとの一括変更</h2>
-              </div>
-              <div className="parent-section-actions">
-                <button type="button" disabled={readonly || saveState === "saving"} onClick={() => void applyBasicPattern()}>基本予定を反映</button>
-                <button type="button" disabled={readonly} onClick={applyWeekdayBulk}>曜日設定を反映</button>
-              </div>
+          <section className="parent-schedule-tools" aria-label="予定のまとめ入力">
+            <div className="parent-quick-entry-list">
+              <article>
+                <div>
+                  <strong>曜日ごとにまとめて入力</strong>
+                  <p>「毎週月曜日は8:30～17:00」のように、同じ曜日の予定をまとめて設定できます。</p>
+                </div>
+                <button type="button" aria-expanded={weekdayBulkOpen} aria-controls="parent-weekday-settings" disabled={readonly} onClick={() => setWeekdayBulkOpen((open) => !open)}>
+                  {weekdayBulkOpen ? "曜日設定を閉じる" : "曜日ごとに設定する"}
+                </button>
+              </article>
+              {data.children.length > 1 ? (
+                <article>
+                  <div>
+                    <strong>きょうだいへコピー</strong>
+                    <p>入力した予定を、このご家庭のきょうだいの予定にもコピーできます。</p>
+                  </div>
+                  <button type="button" disabled={readonly || saveState === "saving"} onClick={requestSiblingCopy}>この予定をきょうだいにもコピー</button>
+                </article>
+              ) : null}
             </div>
-            <div className="weekday-bulk-form">
-              <label>
-                <span>曜日</span>
-                <select value={bulkWeekday} disabled={readonly} onChange={(event) => setBulkWeekday(Number(event.currentTarget.value))}>
-                  {bulkWeekdays.map((weekday) => <option key={weekday.value} value={weekday.value}>{weekday.label}</option>)}
-                </select>
-              </label>
-              <label className="parent-check-row">
-                <input type="checkbox" checked={bulkEnabled} disabled={readonly} onChange={(event) => setBulkEnabled(event.currentTarget.checked)} />
-                <span>この曜日は利用する</span>
-              </label>
-              <label>
-                <span>登園時刻</span>
-                <select value={bulkArrival} disabled={readonly || !bulkEnabled} onChange={(event) => setBulkArrival(event.currentTarget.value)}>
-                  {timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>降園時刻</span>
-                <select value={bulkDeparture} disabled={readonly || !bulkEnabled} onChange={(event) => setBulkDeparture(event.currentTarget.value)}>
-                  {timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}
-                </select>
-              </label>
-            </div>
+            {weekdayBulkOpen ? (
+              <div id="parent-weekday-settings" className="parent-weekday-settings">
+                <div>
+                  <strong>曜日ごとの予定を設定する</strong>
+                  <p>休園日と在籍期間外の日付は変更されません。</p>
+                </div>
+                <div className="weekday-bulk-form">
+                  <label>
+                    <span>曜日</span>
+                    <select value={bulkWeekday} disabled={readonly} onChange={(event) => setBulkWeekday(Number(event.currentTarget.value))}>
+                      {bulkWeekdays.map((weekday) => <option key={weekday.value} value={weekday.value}>{weekday.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="parent-check-row">
+                    <input type="checkbox" checked={bulkEnabled} disabled={readonly} onChange={(event) => setBulkEnabled(event.currentTarget.checked)} />
+                    <span>この曜日は利用する</span>
+                  </label>
+                  <label>
+                    <span>登園時刻</span>
+                    <select value={bulkArrival} disabled={readonly || !bulkEnabled} onChange={(event) => setBulkArrival(event.currentTarget.value)}>
+                      {timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>降園時刻</span>
+                    <select value={bulkDeparture} disabled={readonly || !bulkEnabled} onChange={(event) => setBulkDeparture(event.currentTarget.value)}>
+                      {timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}
+                    </select>
+                  </label>
+                </div>
+                <button type="button" className="parent-weekday-apply" disabled={readonly} onClick={applyWeekdayBulk}>選んだ曜日の予定をまとめて反映する</button>
+              </div>
+            ) : null}
           </section>
 
           <section className="parent-schedule-panel">
@@ -569,8 +693,9 @@ export function ParentScheduleClient() {
                       </div>
                       <span className={`parent-status ${day.usageStatus}`}>{usageLabel(day)}</span>
                     </div>
+                    {day.closureName === "家庭保育協力日" ? <p className="parent-cooperation-day">家庭保育協力日</p> : null}
                     {day.locked ? (
-                      <div className="parent-readonly-time">{day.closureName ?? usageLabel(day)}</div>
+                      <div className="parent-readonly-time">{usageLabel(day)}</div>
                     ) : (
                       <div className="parent-day-fields">
                         <label className="parent-check-row">
@@ -589,7 +714,6 @@ export function ParentScheduleClient() {
                             {timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}
                           </select>
                         </label>
-                        <div className="parent-day-time">{dayTimeLabel(day)}</div>
                       </div>
                     )}
                     {error ? <p className="parent-field-error">{error}</p> : null}
@@ -599,50 +723,16 @@ export function ParentScheduleClient() {
             </div>
           </section>
 
-          <section className="parent-schedule-panel">
-            <div className="parent-section-title">
-              <div>
-                <span className="parent-eyebrow">提出前の確認</span>
-                <h2>家庭内の入力状況</h2>
-              </div>
+          <section className="parent-schedule-panel parent-submit-panel">
+            <div>
+              <span className="parent-eyebrow">入力の最後に行います</span>
+              <h2>{readonly ? "提出済みです" : "入力内容を確認して、園へ提出してください"}</h2>
+              <p>{readonly ? "変更が必要な場合は、園へLINEまたは直接ご連絡ください。" : "家庭内のお子さま全員の入力状況を確認してから、まとめて園へ提出します。"}</p>
             </div>
-            <div className="family-review-list">
-              {allStats.map(({ child, stats }) => (
-                <div key={child.id}>
-                  <strong>{child.name}</strong>
-                  <span>{stats.useDays}日利用 / 変更{stats.changedDays}日 / 入力エラー{stats.invalidDays}件</span>
-                </div>
-              ))}
-            </div>
+            {!readonly ? <button type="button" className="primary" disabled={submitting || saveState === "saving"} onClick={requestFamilySubmission}>
+              {data.submission.resubmissionAllowed ? "この内容で園へ再提出する" : "この内容で園へ提出する"}
+            </button> : null}
           </section>
-
-          <section className="parent-schedule-panel">
-            <div className="parent-section-title">
-              <div>
-                <span className="parent-eyebrow">履歴</span>
-                <h2>提出・変更履歴</h2>
-              </div>
-            </div>
-            {data.history.length ? (
-              <ol className="parent-history-list">
-                {data.history.map((entry) => (
-                  <li key={entry.id}>
-                    <strong>{entry.reason}</strong>
-                    <span>{entry.childName ? `${entry.childName} ` : ""}{entry.targetDate ? formatDate(entry.targetDate) : formatMonth(data.period.targetMonth)} / {formatDateTime(entry.changedAt)}</span>
-                  </li>
-                ))}
-              </ol>
-            ) : <p className="parent-empty-text">まだ変更履歴はありません。</p>}
-          </section>
-
-          <div className="parent-fixed-actions">
-            <button type="button" disabled={readonly || data.children.length < 2 || saveState === "saving"} onClick={() => void copyToSiblings()}>
-              この子の予定を兄弟姉妹にも反映
-            </button>
-            <button type="button" className="primary" disabled={readonly || submitting || saveState === "saving"} onClick={() => void submitFamily()}>
-              {data.submission.submittedAt ? "再提出" : "提出"}
-            </button>
-          </div>
         </>
       ) : (
         <section className="parent-schedule-panel">
@@ -650,6 +740,17 @@ export function ParentScheduleClient() {
           <p>この家庭に紐づく園児が見つかりません。園へご連絡ください。</p>
         </section>
       )}
+      <div className="parent-footer-actions">
+        <button type="button" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "ログアウト中..." : "ログアウト"}</button>
+      </div>
+      {confirmation ? (
+        <ConfirmationDialog
+          confirmation={confirmation}
+          busy={confirming}
+          onCancel={closeConfirmation}
+          onConfirm={() => void runConfirmedAction()}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1294,7 +1294,6 @@ export default function Home() {
             <select value={selectedStaff.employmentType} onChange={(event) => updateStaffProfile(selectedStaff.id, { employmentType: event.target.value as EmploymentType })}>
               <option value="常勤">常勤</option>
               <option value="非常勤">非常勤</option>
-              <option value="短時間">短時間</option>
             </select>
           </label>
           <label>
@@ -1806,9 +1805,9 @@ export default function Home() {
       </header>
 
       <nav className="auth-entry-links" aria-label="認証機能">
-        <span>第2段階 認証確認</span>
+        <span>この画面は試作版です</span>
         <a href="/auth/parent">保護者ログイン</a>
-        <a href="/auth/admin">管理者ログイン</a>
+        <a href="/auth/admin">正式な管理画面へ</a>
       </nav>
 
       <div className="mode-switch role-switch" aria-label="利用者種類切り替え">

@@ -10,8 +10,8 @@ function upsert(database, sqlText, values) {
 export function seedDevelopmentData(database, now = new Date()) {
   const timestamp = now.toISOString();
   const children = [
-    ["demo-child-001", "DEMO-CHILD-001", "架空 園児A", "かくう えんじえー", "架空組A", "2095-06-15"],
-    ["demo-child-002", "DEMO-CHILD-002", "架空 園児B", "かくう えんじびー", "架空組B", "2097-09-01"],
+    ["demo-child-001", "DEMO-CHILD-001", "ベビーローズA", "べびーろーずえー", "0歳児", "2025-06-15"],
+    ["demo-child-002", "DEMO-CHILD-002", "ベビーローズB", "べびーろーずびー", "1歳児", "2024-09-01"],
   ];
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -25,8 +25,8 @@ export function seedDevelopmentData(database, now = new Date()) {
     upsert(
       database,
       `INSERT INTO family_accounts (id, family_id, login_id, password_hash, must_change_password, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, 1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET login_id = excluded.login_id, password_hash = NULL, updated_at = excluded.updated_at`,
+       VALUES (?, ?, ?, NULL, 0, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET login_id = excluded.login_id, password_hash = NULL, must_change_password = 0, updated_at = excluded.updated_at`,
       ["demo-family-account-001", DEMO_FAMILY_ID, "demo-family-001", timestamp, timestamp],
     );
 
@@ -34,15 +34,16 @@ export function seedDevelopmentData(database, now = new Date()) {
       upsert(
         database,
         `INSERT INTO children (id, child_code, name, kana, class_name, birth_date, enrollment_date, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, '2099-04-01', 'enrolled', ?, ?)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, kana = excluded.kana, class_name = excluded.class_name, updated_at = excluded.updated_at`,
+         VALUES (?, ?, ?, ?, ?, ?, '2026-04-01', 'enrolled', ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, kana = excluded.kana, class_name = excluded.class_name,
+           birth_date = excluded.birth_date, enrollment_date = excluded.enrollment_date, updated_at = excluded.updated_at`,
         [...child, timestamp, timestamp],
       );
       upsert(
         database,
-        `INSERT INTO family_children (family_id, child_id, relationship_label, is_primary, sort_order, created_at)
-         VALUES (?, ?, '保護者（架空）', 1, ?, ?)
-         ON CONFLICT(family_id, child_id) DO UPDATE SET sort_order = excluded.sort_order`,
+        `INSERT INTO family_children (family_id, child_id, relationship_label, is_primary, sort_order, active_from, active_to, created_at)
+         VALUES (?, ?, '保護者（架空）', 1, ?, '2026-04-01', NULL, ?)
+         ON CONFLICT(family_id, child_id) DO UPDATE SET sort_order = excluded.sort_order, active_from = excluded.active_from, active_to = NULL`,
         [DEMO_FAMILY_ID, child[0], children.indexOf(child), timestamp],
       );
     }
@@ -61,7 +62,7 @@ export function seedDevelopmentData(database, now = new Date()) {
         upsert(
           database,
           `INSERT INTO basic_usage_patterns (id, child_id, weekday, enabled, arrival_time, departure_time, valid_from, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, '2099-04-01', ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, '2026-04-01', ?, ?)
            ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, arrival_time = excluded.arrival_time, departure_time = excluded.departure_time, updated_at = excluded.updated_at`,
           [`demo-pattern-${childId}-${weekday}`, childId, weekday, enabled, "08:30", "17:30", timestamp, timestamp],
         );
@@ -70,11 +71,25 @@ export function seedDevelopmentData(database, now = new Date()) {
 
     upsert(
       database,
-      `INSERT INTO submission_periods (id, target_month, deadline_at, status, created_at, updated_at)
-       VALUES (?, ?, '2099-03-25T14:59:59.000Z', 'open', ?, ?)
-       ON CONFLICT(id) DO UPDATE SET deadline_at = excluded.deadline_at, status = excluded.status, updated_at = excluded.updated_at`,
+      `INSERT INTO submission_periods (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+       VALUES (?, ?, '2099-03-25T14:59:59.000Z', 'open', 1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET deadline_at = excluded.deadline_at, status = excluded.status,
+         is_parent_target = excluded.is_parent_target, updated_at = excluded.updated_at`,
       [DEMO_PERIOD_ID, DEMO_MONTH, timestamp, timestamp],
     );
+    for (const [id, targetMonth, deadlineAt] of [
+      ["demo-period-2026-05", "2026-05", "2026-04-25T14:59:59.000Z"],
+      ["demo-period-2026-06", "2026-06", "2026-05-25T14:59:59.000Z"],
+    ]) {
+      upsert(
+        database,
+        `INSERT INTO submission_periods (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+         VALUES (?, ?, ?, 'closed', 0, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET deadline_at = excluded.deadline_at, status = 'closed',
+           is_parent_target = 0, updated_at = excluded.updated_at`,
+        [id, targetMonth, deadlineAt, timestamp, timestamp],
+      );
+    }
     upsert(
       database,
       `INSERT INTO closure_days (id, submission_period_id, date, name, type, parent_input_allowed, note, created_at, updated_at)

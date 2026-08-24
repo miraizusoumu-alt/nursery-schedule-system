@@ -114,6 +114,92 @@ export const administrators = sqliteTable(
   ],
 );
 
+export const staffMembers = sqliteTable(
+  "staff_members",
+  {
+    id: text("id").primaryKey(),
+    staffCode: text("staff_code").notNull(),
+    name: text("name").notNull(),
+    employmentStartDate: text("employment_start_date").notNull(),
+    employmentEndDate: text("employment_end_date"),
+    status: text("status").notNull().default("active"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_members_staff_code").on(table.staffCode),
+    index("idx_staff_members_status_dates").on(table.status, table.employmentStartDate, table.employmentEndDate),
+    check("chk_staff_members_code", sql`length(trim(${table.staffCode})) > 0`),
+    check("chk_staff_members_name", sql`length(trim(${table.name})) > 0`),
+    check("chk_staff_members_status", sql`${table.status} in ('active', 'inactive')`),
+    check(
+      "chk_staff_members_employment_dates",
+      sql`${table.employmentEndDate} is null or ${table.employmentEndDate} >= ${table.employmentStartDate}`,
+    ),
+  ],
+);
+
+export const staffQualifications = sqliteTable(
+  "staff_qualifications",
+  {
+    id: text("id").primaryKey(),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    qualificationType: text("qualification_type").notNull(),
+    validFrom: text("valid_from").notNull(),
+    validTo: text("valid_to"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_qualifications_staff_type_from").on(table.staffId, table.qualificationType, table.validFrom),
+    index("idx_staff_qualifications_staff_dates").on(table.staffId, table.validFrom, table.validTo),
+    check("chk_staff_qualifications_type", sql`length(trim(${table.qualificationType})) > 0`),
+    check("chk_staff_qualifications_dates", sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`),
+  ],
+);
+
+export const staffWorkConditionVersions = sqliteTable(
+  "staff_work_condition_versions",
+  {
+    id: text("id").primaryKey(),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    validFrom: text("valid_from").notNull(),
+    validTo: text("valid_to"),
+    employmentType: text("employment_type").notNull(),
+    monthlyMinutesLimit: integer("monthly_minutes_limit"),
+    maxConsecutiveDays: integer("max_consecutive_days"),
+    createdByAdministratorId: text("created_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_work_conditions_staff_from").on(table.staffId, table.validFrom),
+    index("idx_staff_work_conditions_staff_dates").on(table.staffId, table.validFrom, table.validTo),
+    check("chk_staff_work_conditions_employment_type", sql`length(trim(${table.employmentType})) > 0`),
+    check("chk_staff_work_conditions_dates", sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`),
+    check("chk_staff_work_conditions_monthly_limit", sql`${table.monthlyMinutesLimit} is null or ${table.monthlyMinutesLimit} > 0`),
+    check("chk_staff_work_conditions_consecutive_days", sql`${table.maxConsecutiveDays} is null or ${table.maxConsecutiveDays} > 0`),
+  ],
+);
+
+export const staffWeeklyAvailability = sqliteTable(
+  "staff_weekly_availability",
+  {
+    workConditionVersionId: text("work_condition_version_id").notNull().references(() => staffWorkConditionVersions.id, { onDelete: "cascade" }),
+    weekday: integer("weekday").notNull(),
+    available: integer("available", { mode: "boolean" }).notNull().default(false),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workConditionVersionId, table.weekday] }),
+    check("chk_staff_weekly_availability_weekday", sql`${table.weekday} between 0 and 6`),
+    check(
+      "chk_staff_weekly_availability_times",
+      sql`(${table.available} = 0 and ${table.startTime} is null and ${table.endTime} is null)
+          or (${table.available} = 1 and ${table.startTime} is not null and ${table.endTime} is not null and ${table.startTime} < ${table.endTime})`,
+    ),
+  ],
+);
+
 export const basicUsagePatterns = sqliteTable(
   "basic_usage_patterns",
   {
@@ -215,6 +301,7 @@ export const familySubmissions = sqliteTable(
     latestSubmittedVersionId: text("latest_submitted_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
     latestConfirmedVersionId: text("latest_confirmed_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
     latestEffectiveVersionId: text("latest_effective_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
+    resubmissionAllowedForVersionId: text("resubmission_allowed_for_version_id").references((): AnySQLiteColumn => familySubmissionVersions.id, { onDelete: "restrict" }),
     lastUpdatedAt: text("last_updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },

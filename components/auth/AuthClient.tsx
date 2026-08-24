@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api } from "@/lib/client/api";
+import { api, ApiError } from "@/lib/client/api";
 
 type Actor = {
   type: "family" | "administrator";
@@ -37,10 +37,14 @@ type AdministratorAccount = {
   stopped_at: string | null;
 };
 
-type Credential = {
+export type Credential = {
   loginId: string;
   temporaryPassword: string;
+  familyId?: string;
+  administratorId?: string;
   role?: string;
+  childNames?: string[];
+  startDate?: string | null;
 };
 
 type AuthSettings = {
@@ -101,6 +105,7 @@ function PasswordField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [visible, setVisible] = useState(false);
+  const [liveValue, setLiveValue] = useState(value);
   const [copyStatus, setCopyStatus] = useState<"" | "copied" | "failed">("");
 
   function toggleVisibility() {
@@ -128,6 +133,7 @@ function PasswordField({
 
   function updateValue(nextValue: string) {
     setCopyStatus("");
+    setLiveValue(nextValue);
     onValueChange(nextValue);
   }
 
@@ -143,8 +149,11 @@ function PasswordField({
           autoComplete={autoComplete}
           minLength={minLength}
           maxLength={maxLength}
-          value={value}
+          defaultValue={value}
           onChange={(event) => updateValue(event.currentTarget.value)}
+          onInput={(event) => updateValue(event.currentTarget.value)}
+          autoCapitalize="none"
+          spellCheck={false}
           required
         />
         <div className="password-field-actions">
@@ -158,7 +167,7 @@ function PasswordField({
           >
             {visible ? "隠す" : "表示する"}
           </button>
-          {copyable ? <button type="button" className="password-action" onClick={() => void copyPassword()} disabled={!value}>コピー</button> : null}
+          {copyable ? <button type="button" className="password-action" onClick={() => void copyPassword()} disabled={!liveValue}>コピー</button> : null}
         </div>
       </div>
       {copyable && copyStatus ? (
@@ -171,38 +180,71 @@ function PasswordField({
 }
 
 export function LoginForm({ scope }: { scope: "family" | "admin" }) {
-  const [loginId, setLoginId] = useState("");
-  const [password, setPassword] = useState("");
+  const loginIdInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  function loginErrorMessage(error: unknown) {
+    if (error instanceof ApiError) {
+      if (error.code === "INVALID_CREDENTIALS") return "ログインIDまたはパスワードが正しくありません。";
+      if (error.status >= 500) return "ログイン処理でエラーが発生しました。しばらくしてからもう一度お試しください。";
+      return error.message;
+    }
+    return "通信に失敗しました。しばらくしてからもう一度お試しください。";
+  }
+
+  async function login(submittedLoginId: string, submittedPassword: string) {
+    if (submitting) return;
     setMessage("");
     setSubmitting(true);
     try {
-      const result = await api<{ redirectTo: string }>(`/api/auth/login/${scope}`, { method: "POST", body: { loginId, password } });
+      const result = await api<{ redirectTo: string }>(`/api/auth/login/${scope}`, {
+        method: "POST",
+        body: { loginId: submittedLoginId, password: submittedPassword },
+      });
       window.location.assign(result.redirectTo);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "ログインできませんでした。");
-      setPassword("");
+      setMessage(loginErrorMessage(error));
+      if (passwordInputRef.current) passwordInputRef.current.value = "";
+      requestAnimationFrame(() => {
+        if (loginIdInputRef.current) loginIdInputRef.current.value = submittedLoginId;
+      });
     } finally {
       setSubmitting(false);
     }
   }
 
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const submittedLoginId = String(formData.get("username") ?? "");
+    const submittedPassword = String(formData.get("password") ?? "");
+    void login(submittedLoginId, submittedPassword);
+  }
+
   return (
-    <form className="auth-form" name={`${scope}-login`} autoComplete="on" onSubmit={submit}>
+    <form
+      className="auth-form"
+      name={`${scope}-login`}
+      autoComplete="on"
+      onSubmit={submit}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || submitting) return;
+        event.preventDefault();
+        event.currentTarget.requestSubmit();
+      }}
+    >
       <label htmlFor={`${scope}-login-id`}>
         <span>ログインID</span>
-        <input id={`${scope}-login-id`} name="username" autoComplete="username" value={loginId} onChange={(event) => setLoginId(event.target.value)} required />
+        <input ref={loginIdInputRef} id={`${scope}-login-id`} name="username" autoComplete="username" required />
       </label>
       <label htmlFor={`${scope}-login-password`}>
         <span>パスワード</span>
-        <input id={`${scope}-login-password`} name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+        <input ref={passwordInputRef} id={`${scope}-login-password`} name="password" type="password" autoComplete="current-password" required />
       </label>
       {message ? <p className="auth-message error" role="alert">{message}</p> : null}
-      <button className="primary" type="submit" disabled={submitting}>{submitting ? "確認中..." : "ログイン"}</button>
+      <button className="primary" type="button" onClick={(event) => event.currentTarget.form?.requestSubmit()} disabled={submitting}>{submitting ? "確認中..." : "ログイン"}</button>
     </form>
   );
 }
@@ -302,11 +344,66 @@ export function ParentAccountView() {
   );
 }
 
-function CredentialNotice({ credential, onDismiss }: { credential: Credential; onDismiss: () => void }) {
+function printFamilyLoginGuide(credential: Credential) {
+  const popup = window.open("", "_blank", "width=760,height=900");
+  if (!popup) throw new Error("ログイン案内を開けませんでした。ポップアップを許可してください。");
+  popup.opener = null;
+  const document = popup.document;
+  document.title = "保護者用 利用予定表ログイン案内";
+  const style = document.createElement("style");
+  style.textContent = `body{font-family:"Yu Gothic",sans-serif;color:#17212b;margin:40px;line-height:1.7}main{max-width:680px;margin:auto}h1{font-size:26px;border-bottom:3px solid #28766b;padding-bottom:12px}dl{border:1px solid #b8c4c1;padding:20px}div{margin:12px 0}dt{font-size:13px;color:#52605e}dd{font-size:21px;font-weight:700;margin:2px 0;overflow-wrap:anywhere}.note{margin-top:28px;padding:16px;background:#f3f7f6}@page{size:A4;margin:18mm}@media print{button{display:none}}`;
+  document.head.appendChild(style);
+  const main = document.createElement("main");
+  const title = document.createElement("h1");
+  title.textContent = "保護者用 利用予定表ログイン案内";
+  main.appendChild(title);
+  const intro = document.createElement("p");
+  intro.textContent = `${credential.childNames?.join("、") || "お子さま"}の利用予定入力に使用するログイン情報です。`;
+  main.appendChild(intro);
+  const list = document.createElement("dl");
+  for (const [label, value] of [
+    ["ログイン画面", `${window.location.origin}/auth/parent`],
+    ["ログインID", credential.loginId],
+    ["パスワード", credential.temporaryPassword],
+    ["使用開始日", credential.startDate || "園へご確認ください"],
+  ]) {
+    const row = document.createElement("div");
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value;
+    row.appendChild(term);
+    row.appendChild(description);
+    list.appendChild(row);
+  }
+  main.appendChild(list);
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent = "パスワードを忘れた場合は、園へご連絡ください。園から新しいパスワードを再発行します。";
+  main.appendChild(note);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "印刷・PDFに保存";
+  button.addEventListener("click", () => {
+    try {
+      popup.print();
+    } catch {
+      popup.alert("印刷画面を開けませんでした。ブラウザーの印刷機能をお試しください。");
+    }
+  });
+  main.appendChild(button);
+  document.body.appendChild(main);
+  popup.focus();
+}
+
+export function CredentialNotice({ credential, onDismiss }: { credential: Credential; onDismiss: () => void }) {
+  const isFamily = Boolean(credential.familyId);
+  const passwordLabel = isFamily ? "園発行パスワード" : "初期・仮パスワード";
   return (
     <aside className="credential-notice" role="status">
-      <div><strong>初期・仮パスワード（この画面で一度だけ表示）</strong><button type="button" onClick={onDismiss}>閉じる</button></div>
-      <dl><div><dt>ログインID</dt><dd>{credential.loginId}</dd></div><div><dt>初期・仮パスワード</dt><dd className="credential-value">{credential.temporaryPassword}</dd></div></dl>
+      <div><strong>{passwordLabel}（この画面で一度だけ表示）</strong><button type="button" onClick={onDismiss}>閉じる</button></div>
+      <dl><div><dt>ログインID</dt><dd>{credential.loginId}</dd></div><div><dt>{passwordLabel}</dt><dd className="credential-value">{credential.temporaryPassword}</dd></div></dl>
+      {isFamily ? <button type="button" onClick={() => printFamilyLoginGuide(credential)}>ログイン案内を印刷・PDF保存</button> : null}
     </aside>
   );
 }
@@ -319,11 +416,11 @@ function FamilyRow({ family, reload, showCredential, setMessage }: { family: Fam
   }
   return (
     <tr>
-      <th><strong>{family.display_name}</strong><span>{family.family_code}</span></th>
+      <th><strong>{family.display_name}</strong></th>
       <td>{family.login_id}</td>
-      <td><input type="date" value={handover} onChange={(event) => setHandover(event.target.value)} /><button type="button" onClick={() => perform(async () => { await api(`/api/admin/families/${family.id}/handover`, { method: "PATCH", body: { handedOverAt: handover } }); })}>受渡日を保存</button></td>
+      <td><input type="date" value={handover} onChange={(event) => setHandover(event.target.value)} /><button type="button" onClick={() => perform(async () => { await api(`/api/admin/families/${family.id}/handover`, { method: "PATCH", body: { handedOverAt: handover } }); })}>使用開始日を保存</button></td>
       <td><input type="date" value={stopDate} onChange={(event) => setStopDate(event.target.value)} /><button type="button" onClick={() => perform(async () => { await api(`/api/admin/families/${family.id}/stop-date`, { method: "PATCH", body: { stopDate } }); })}>{stopDate ? "停止日を保存" : "停止日を解除"}</button></td>
-      <td><button type="button" onClick={() => { if (window.confirm("仮パスワードを再発行し、既存セッションを無効にしますか？")) void perform(async () => { const result = await api<{ credential: Credential }>(`/api/admin/families/${family.id}/reissue-password`, { method: "POST", body: {} }); showCredential(result.credential); }); }}>仮パスワード再発行</button></td>
+      <td><button type="button" onClick={() => { if (window.confirm("園発行パスワードを再発行し、既存セッションを無効にしますか？")) void perform(async () => { const result = await api<{ credential: Credential }>(`/api/admin/families/${family.id}/reissue-password`, { method: "POST", body: {} }); showCredential(result.credential); }); }}>園発行パスワードを再発行</button></td>
     </tr>
   );
 }
@@ -333,21 +430,16 @@ export function AdminAccountsView() {
   const [families, setFamilies] = useState<FamilyAccount[]>([]);
   const [administrators, setAdministrators] = useState<AdministratorAccount[]>([]);
   const [settings, setSettings] = useState<AuthSettings | null>(null);
-  const [logs, setLogs] = useState<Array<{ id: string; operation: string; occurred_at: string; target_type: string }>>([]);
   const [credential, setCredential] = useState<Credential | null>(null);
   const [message, setMessage] = useState("");
   const [criticalPassword, setCriticalPassword] = useState("");
 
   const reload = useCallback(async () => {
-    const [accounts, history] = await Promise.all([
-      api<{ actor: Actor; families: FamilyAccount[]; administrators: AdministratorAccount[]; settings: AuthSettings }>("/api/admin/accounts"),
-      api<{ logs: Array<{ id: string; operation: string; occurred_at: string; target_type: string }> }>("/api/admin/operation-logs?limit=30"),
-    ]);
+    const accounts = await api<{ actor: Actor; families: FamilyAccount[]; administrators: AdministratorAccount[]; settings: AuthSettings }>("/api/admin/accounts");
     setActor(accounts.actor);
     setFamilies(accounts.families);
     setAdministrators(accounts.administrators);
     setSettings(accounts.settings);
-    setLogs(history.logs);
   }, []);
 
   useEffect(() => {
@@ -356,16 +448,6 @@ export function AdminAccountsView() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [reload]);
-
-  async function issueFamily(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = Object.fromEntries(new FormData(form));
-    try {
-      const result = await api<{ credential: Credential }>("/api/admin/families", { method: "POST", body: values });
-      setCredential(result.credential); setMessage("家庭アカウントを発行しました。"); form.reset(); await reload();
-    } catch (error) { setMessage(error instanceof Error ? error.message : "発行できませんでした。"); }
-  }
 
   async function issueAdministrator(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -386,36 +468,20 @@ export function AdminAccountsView() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "更新できませんでした。"); }
   }
 
-  async function saveSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!settings) return;
-    try {
-      await api("/api/admin/auth-settings", { method: "PATCH", body: { settings, currentPassword: criticalPassword } });
-      setMessage("認証設定を保存しました。"); setCriticalPassword(""); await reload();
-    } catch (error) { setMessage(error instanceof Error ? error.message : "保存できませんでした。"); }
-  }
-
   if (!actor || !settings) return <p className={`auth-message ${message ? "error" : "info"}`}>{message || "管理者情報を確認中..."}</p>;
   const isMaster = actor.role === "master";
   return (
     <div className="auth-stack">
-      <section className="auth-section auth-toolbar"><div><span>ログイン中</span><strong>{actor.displayName}（{isMaster ? "マスター管理者" : "通常管理者"}）</strong></div><div className="admin-schedule-nav"><a href="/admin/schedules">利用予定管理</a><LogoutButton /></div></section>
       {credential ? <CredentialNotice credential={credential} onDismiss={() => setCredential(null)} /> : null}
       {message ? <p className="auth-message info" role="status">{message}</p> : null}
 
-      <section className="auth-section"><div className="auth-section-heading"><div><span>初期パスワードは一度だけ表示</span><h2>家庭アカウント発行</h2></div></div><form className="auth-inline-form" onSubmit={issueFamily}><label><span>家庭コード</span><input name="familyCode" placeholder="DEMO-FAMILY-101" required /></label><label><span>家庭表示名</span><input name="displayName" placeholder="架空 認証確認家庭" required /></label><label><span>ログインID</span><input name="loginId" placeholder="demo-family-user" required /></label><button className="primary" type="submit">発行</button></form></section>
+      <section className="auth-section"><div className="auth-section-heading"><div><span>{families.length}家庭</span><h2>保護者ログインアカウント管理</h2></div></div><p className="admin-schedule-note">新しい保護者ログインアカウントは、園児を登録した後に園児画面から発行します。</p><div className="auth-table-wrap"><table className="auth-table"><thead><tr><th>家庭</th><th>ログインID</th><th>使用開始日</th><th>停止日</th><th>認証</th></tr></thead><tbody>{families.map((family) => <FamilyRow key={family.id} family={family} reload={reload} showCredential={setCredential} setMessage={setMessage} />)}</tbody></table></div></section>
 
-      <section className="auth-section"><div className="auth-section-heading"><div><span>{families.length}家庭</span><h2>家庭アカウント管理</h2></div></div><div className="auth-table-wrap"><table className="auth-table"><thead><tr><th>家庭</th><th>ログインID</th><th>受渡日</th><th>停止日</th><th>認証</th></tr></thead><tbody>{families.map((family) => <FamilyRow key={family.id} family={family} reload={reload} showCredential={setCredential} setMessage={setMessage} />)}</tbody></table></div></section>
-
-      <section className="auth-section"><div className="auth-section-heading"><div><span>通常管理者は通常権限のみ発行可能</span><h2>管理者アカウント発行</h2></div></div><form className="auth-inline-form" onSubmit={issueAdministrator}><label><span>表示名</span><input name="displayName" placeholder="架空 管理者" required /></label><label><span>ログインID</span><input name="loginId" placeholder="demo-admin-user" required /></label><label><span>権限</span><select name="role" defaultValue="normal"><option value="normal">通常管理者</option>{isMaster ? <option value="master">マスター管理者</option> : null}</select></label><button className="primary" type="submit">発行</button></form></section>
+      <section className="auth-section"><div className="auth-section-heading"><div><span>通常管理者は通常権限のみ発行可能</span><h2>管理者アカウント発行</h2></div></div><form className="auth-inline-form" onSubmit={issueAdministrator}><label><span>表示名</span><input name="displayName" placeholder="管理者名" required /></label><label><span>ログインID</span><input name="loginId" placeholder="admin.sato" required /></label><label><span>権限</span><select name="role" defaultValue="normal"><option value="normal">通常管理者</option>{isMaster ? <option value="master">マスター管理者</option> : null}</select></label><button className="primary" type="submit">発行</button></form></section>
 
       {isMaster ? <section className="auth-section critical-section"><div className="auth-section-heading"><div><span>重要操作の直前に再確認</span><h2>現在のパスワード</h2></div></div><label className="critical-password" htmlFor="critical-current-password"><span>マスター管理者の現在のパスワード</span><input id="critical-current-password" name="criticalCurrentPassword" type="password" autoComplete="current-password" value={criticalPassword} onChange={(event) => setCriticalPassword(event.target.value)} /></label></section> : null}
 
-      <section className="auth-section"><div className="auth-section-heading"><div><span>{administrators.length}名</span><h2>管理者アカウント管理</h2></div></div><div className="auth-table-wrap"><table className="auth-table"><thead><tr><th>管理者</th><th>権限</th><th>状態</th><th>操作</th></tr></thead><tbody>{administrators.map((administrator) => <tr key={administrator.id}><th><strong>{administrator.display_name}</strong><span>{administrator.login_id}</span></th><td>{administrator.role === "master" ? "マスター" : "通常"}</td><td>{administrator.status === "active" ? "有効" : "停止"}</td><td className="auth-actions">{isMaster && administrator.status === "active" ? <><button type="button" onClick={() => void administratorAction(`/api/admin/administrators/${administrator.id}/reissue-password`, "POST", { currentPassword: criticalPassword }, "仮パスワードを再発行し、既存セッションを無効にしますか？")}>再発行</button><button type="button" onClick={() => void administratorAction(`/api/admin/administrators/${administrator.id}/role`, "PATCH", { role: administrator.role === "master" ? "normal" : "master", currentPassword: criticalPassword }, "管理者権限を変更し、既存セッションを無効にしますか？")}>権限変更</button><button type="button" onClick={() => void administratorAction(`/api/admin/administrators/${administrator.id}/stop`, "PATCH", { currentPassword: criticalPassword }, "この管理者を停止しますか？")}>停止</button></> : <span>閲覧のみ</span>}</td></tr>)}</tbody></table></div></section>
-
-      {isMaster ? <section className="auth-section"><div className="auth-section-heading"><div><span>値は仕様より弱くできません</span><h2>重要な認証設定</h2></div></div><form className="settings-grid" onSubmit={saveSettings}><label><span>失敗回数上限</span><input type="number" min={3} max={5} value={settings.loginFailureLimit} onChange={(event) => setSettings({ ...settings, loginFailureLimit: Number(event.target.value) })} /></label><label><span>制限時間（分）</span><input type="number" min={15} max={120} value={settings.loginLockMinutes} onChange={(event) => setSettings({ ...settings, loginLockMinutes: Number(event.target.value) })} /></label><label><span>保護者保持（分）</span><input type="number" min={60} max={43200} value={settings.familySessionMinutes} onChange={(event) => setSettings({ ...settings, familySessionMinutes: Number(event.target.value) })} /></label><label><span>管理者保持（分）</span><input type="number" min={15} max={480} value={settings.administratorSessionMinutes} onChange={(event) => setSettings({ ...settings, administratorSessionMinutes: Number(event.target.value) })} /></label><label><span>最小パスワード長</span><input type="number" min={8} max={64} value={settings.passwordMinimumLength} onChange={(event) => setSettings({ ...settings, passwordMinimumLength: Number(event.target.value) })} /></label><button className="primary" type="submit">設定を保存</button></form></section> : null}
-
-      <section className="auth-section"><div className="auth-section-heading"><div><span>直近{logs.length}件</span><h2>認証操作履歴</h2></div></div><ul className="operation-list">{logs.map((log) => <li key={log.id}><strong>{log.operation}</strong><span>{log.target_type} / {new Date(log.occurred_at).toLocaleString("ja-JP")}</span></li>)}</ul></section>
+      <section className="auth-section"><div className="auth-section-heading"><div><span>{administrators.length}名</span><h2>管理者アカウント管理</h2></div></div><div className="auth-table-wrap"><table className="auth-table"><thead><tr><th>管理者</th><th>権限</th><th>状態</th><th>操作</th></tr></thead><tbody>{administrators.map((administrator) => <tr key={administrator.id}><th><strong>{administrator.display_name}</strong></th><td>{administrator.role === "master" ? "マスター" : "通常"}</td><td>{administrator.status === "active" ? "有効" : "停止"}</td><td className="auth-actions">{isMaster && administrator.status === "active" ? <><button type="button" onClick={() => void administratorAction(`/api/admin/administrators/${administrator.id}/reissue-password`, "POST", { currentPassword: criticalPassword }, "仮パスワードを再発行し、既存セッションを無効にしますか？")}>再発行</button><button type="button" onClick={() => void administratorAction(`/api/admin/administrators/${administrator.id}/role`, "PATCH", { role: administrator.role === "master" ? "normal" : "master", currentPassword: criticalPassword }, "管理者権限を変更し、既存セッションを無効にしますか？")}>権限変更</button><button type="button" onClick={() => void administratorAction(`/api/admin/administrators/${administrator.id}/stop`, "PATCH", { currentPassword: criticalPassword }, "この管理者を停止しますか？")}>停止</button></> : <span>閲覧のみ</span>}</td></tr>)}</tbody></table></div></section>
     </div>
   );
 }

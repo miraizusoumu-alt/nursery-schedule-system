@@ -128,9 +128,9 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
       return json({
         ok: true,
         actor: service.publicActor(result.actor),
-        redirectTo: result.actor.mustChangePassword
-          ? "/account/password"
-          : result.actor.type === "family" ? "/parent/schedule" : "/admin/accounts",
+        redirectTo: result.actor.type === "family"
+          ? "/parent/schedule"
+          : result.actor.mustChangePassword ? "/account/password" : "/admin/accounts",
       }, 200, headers);
     }
 
@@ -183,8 +183,11 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
     if (request.method === "POST" && url.pathname === "/api/admin/families") {
       const session = requireSession(request, service, { type: "administrator" });
       assertCsrf(request, session);
-      const body = await readJson(request);
-      return json({ ok: true, credential: await service.issueFamilyAccount(session.actor, body) }, 201);
+      throw new AuthError(
+        "CHILD_REQUIRED",
+        "先に園児を登録し、園児画面から家庭アカウントを発行してください。",
+        409,
+      );
     }
 
     const familyReissue = routeMatch(url.pathname, /^\/api\/admin\/families\/([^/]+)\/reissue-password$/);
@@ -278,6 +281,9 @@ export function authorizeProtectedPage(request, service) {
   if (!session) {
     const loginPath = isAdministratorPage ? "/auth/admin" : "/auth/parent";
     return Response.redirect(new URL(loginPath, request.url), 303);
+  }
+  if (isPasswordPage && session.actor.type === "family") {
+    return Response.redirect(new URL("/parent/schedule", request.url), 303);
   }
   if (session.actor.mustChangePassword && !isPasswordPage) {
     return Response.redirect(new URL("/account/password", request.url), 303);

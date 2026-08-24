@@ -18,7 +18,7 @@ export type DaySource = "base" | "weekday" | "daily" | "admin";
 export type ActorType = "parent" | "staff" | "admin";
 export type ShiftStatus = "uncreated" | "generating" | "draft" | "adjusting" | "confirmed" | "published";
 export type StaffRole = "normal" | "early" | "late";
-export type EmploymentType = "常勤" | "非常勤" | "短時間";
+export type EmploymentType = "常勤" | "非常勤";
 export type AgeGroup = "0歳児" | "1-2歳児" | "3歳以上児";
 
 export type UsagePattern = {
