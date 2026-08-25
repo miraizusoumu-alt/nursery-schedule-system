@@ -8,11 +8,23 @@ type DayType = "work" | "day_off" | "paid_leave" | "other";
 type ActivityType = "childcare" | "break" | "administration" | "training" | "meal_service" | "other_work";
 type Segment = { id?: string; startTime: string; endTime: string; activityType: ActivityType };
 type ScheduleDay = { id: string; date: string; dayType: DayType; segments: Segment[] };
+type StaffPreferenceType = "none" | "day_off" | "work_time";
+type StaffPreference = {
+  id: string | null;
+  date: string;
+  preferenceType: StaffPreferenceType;
+  startTime: string | null;
+  endTime: string | null;
+  requiresAdministratorReview: boolean;
+  reviewMessage: string | null;
+  weeklyAvailability: null | { available: boolean; startTime: string | null; endTime: string | null };
+};
 type StaffSummary = {
   id: string;
   staffCode: string;
   name: string;
   employmentType: string | null;
+  selectedPreference: StaffPreference;
   selectedDay: ScheduleDay | null;
   selectedDayScheduledWorkMinutes: number;
   selectedWeek: { startDate: string; endDate: string };
@@ -117,6 +129,9 @@ export function AdminStaffScheduleManagement() {
   const [selectedStaffId, setSelectedStaffId] = useState("");
   const [dayType, setDayType] = useState<DayType>("work");
   const [segments, setSegments] = useState<Segment[]>(defaultSegments);
+  const [preferenceType, setPreferenceType] = useState<StaffPreferenceType>("none");
+  const [preferenceStartTime, setPreferenceStartTime] = useState("09:00");
+  const [preferenceEndTime, setPreferenceEndTime] = useState("18:00");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -151,6 +166,10 @@ export function AdminStaffScheduleManagement() {
         setDayType("work");
         setSegments(defaultSegments());
       }
+      const preference = selectedStaff?.selectedPreference;
+      setPreferenceType(preference?.preferenceType ?? "none");
+      setPreferenceStartTime(preference?.startTime ?? preference?.weeklyAvailability?.startTime ?? "09:00");
+      setPreferenceEndTime(preference?.endTime ?? preference?.weeklyAvailability?.endTime ?? "18:00");
     }, 0);
     return () => window.clearTimeout(timer);
   }, [selectedStaff]);
@@ -233,19 +252,54 @@ export function AdminStaffScheduleManagement() {
         </details> : null}
       </section>
 
-      {schedule?.month ? <>
-        <section className="auth-section">
-          <div className="auth-section-heading"><div><span>{formatMonth(targetMonth)}</span><h3>職員と日付を選択</h3></div></div>
-          <div className="staff-schedule-selection">
-            <label><span>職員</span><select value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.currentTarget.value)}>{schedule.staff.map((staff) => <option key={staff.id} value={staff.id}>{staff.name}（{staff.staffCode}）</option>)}</select></label>
-            <label><span>日付</span><select value={selectedDate} onChange={(event) => {
-              const date = event.currentTarget.value;
-              void run("date", async () => { await load(targetMonth, date, schedule.viewedVersion?.isCurrent ? "" : schedule.viewedVersion?.id ?? ""); });
-            }}>{dates.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}</select></label>
-          </div>
-          {!schedule.staff.length ? <p className="admin-schedule-note">この月に在籍する職員がいません。</p> : null}
-        </section>
+      {schedule ? <section className="auth-section">
+        <div className="auth-section-heading"><div><span>{formatMonth(targetMonth)}</span><h3>職員と日付を選択</h3></div></div>
+        <div className="staff-schedule-selection">
+          <label><span>職員</span><select value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.currentTarget.value)}>{schedule.staff.map((staff) => <option key={staff.id} value={staff.id}>{staff.name}（{staff.staffCode}）</option>)}</select></label>
+          <label><span>日付</span><select value={selectedDate} onChange={(event) => {
+            const date = event.currentTarget.value;
+            void run("date", async () => { await load(targetMonth, date, schedule.viewedVersion?.isCurrent ? "" : schedule.viewedVersion?.id ?? ""); });
+          }}>{dates.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}</select></label>
+        </div>
+        {!schedule.staff.length ? <p className="admin-schedule-note">この月に在籍する職員がいません。</p> : null}
+      </section> : null}
 
+      {selectedStaff ? <section className="auth-section staff-preference-editor">
+        <div className="auth-section-heading">
+          <div><span>{selectedStaff.name} / {formatDate(selectedDate)}</span><h3>希望休・希望勤務時間</h3></div>
+          {selectedStaff.selectedPreference.requiresAdministratorReview ? <span className="admin-state warning">要確認</span> : null}
+        </div>
+        <p className="admin-schedule-note">実際の公休・有給とは別に、シフト作成前の希望を登録します。</p>
+        <div className="staff-preference-options" role="radiogroup" aria-label="希望内容">
+          <label><input type="radio" name="staff-preference" checked={preferenceType === "none"} disabled={busy !== ""} onChange={() => setPreferenceType("none")} />希望なし</label>
+          <label><input type="radio" name="staff-preference" checked={preferenceType === "day_off"} disabled={busy !== ""} onChange={() => setPreferenceType("day_off")} />希望休</label>
+          <label><input type="radio" name="staff-preference" checked={preferenceType === "work_time"} disabled={busy !== ""} onChange={() => setPreferenceType("work_time")} />希望勤務時間</label>
+        </div>
+        {preferenceType === "work_time" ? <div className="staff-preference-times">
+          <label><span>希望開始</span><select value={preferenceStartTime} disabled={busy !== ""} onChange={(event) => setPreferenceStartTime(event.currentTarget.value)}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+          <label><span>希望終了</span><select value={preferenceEndTime} disabled={busy !== ""} onChange={(event) => setPreferenceEndTime(event.currentTarget.value)}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+        </div> : null}
+        <p className="staff-preference-weekly">
+          基本勤務可能時間: {selectedStaff.selectedPreference.weeklyAvailability?.available
+            ? `${selectedStaff.selectedPreference.weeklyAvailability.startTime}～${selectedStaff.selectedPreference.weeklyAvailability.endTime}`
+            : "勤務不可または未登録"}
+        </p>
+        {selectedStaff.selectedPreference.reviewMessage ? <p className="auth-message warning">{selectedStaff.selectedPreference.reviewMessage}</p> : null}
+        <button type="button" className="primary" disabled={busy !== ""} onClick={() => void run("preference", async () => {
+          const result = await api<{ schedule: StaffSchedule }>("/api/admin/staff-schedules/preference", { method: "PUT", body: {
+            targetMonth,
+            staffId: selectedStaff.id,
+            date: selectedDate,
+            preferenceType,
+            startTime: preferenceType === "work_time" ? preferenceStartTime : null,
+            endTime: preferenceType === "work_time" ? preferenceEndTime : null,
+          } });
+          setSchedule(result.schedule);
+          setMessage(`${selectedStaff.name}の${formatDate(selectedDate)}の希望を保存しました。`);
+        })}>{busy === "preference" ? "保存中..." : "希望を保存"}</button>
+      </section> : null}
+
+      {schedule?.month ? <>
         {selectedStaff ? <>
           <section className="staff-schedule-metrics" aria-label={`${selectedStaff.name}の予定実労働時間`}>
             <div><span>選択日</span><strong>{formatMinutes(selectedStaff.selectedDayScheduledWorkMinutes)}</strong></div>

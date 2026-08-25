@@ -18,6 +18,7 @@ import {
   summarizeScheduleDays,
   validateScheduleDay,
   validateScheduleSegments,
+  validateScheduleTimeRange,
 } from "../lib/server/staffing/scheduled-work.mjs";
 import { handleStaffScheduleApiRequest } from "../server/staff-schedule-http.mjs";
 
@@ -49,6 +50,18 @@ test("validates fifteen-minute schedule boundaries and rejects overlapping segme
     ]),
     "TIME_RANGE_OVERLAP",
   );
+});
+
+test("shares fifteen-minute time validation with staff preferences", () => {
+  assert.deepEqual(validateScheduleTimeRange("09:00", "18:00"), {
+    startTime: "09:00",
+    endTime: "18:00",
+    startMinutes: 9 * 60,
+    endMinutes: 18 * 60,
+  });
+  expectCode(() => validateScheduleTimeRange("09:05", "18:00"), "INVALID_TIME");
+  expectCode(() => validateScheduleTimeRange("18:00", "09:00"), "INVALID_TIME_RANGE");
+  expectCode(() => validateScheduleTimeRange("06:15", "18:00"), "OUTSIDE_SCHEDULE_RANGE");
 });
 
 test("excludes breaks and includes every work activity in daily scheduled minutes", () => {
@@ -384,6 +397,117 @@ test("rejects overlapping saves, stale versions, family actors, and family API s
       { service, authService: { sessionByToken: () => ({ actor: family }) } },
     );
     assert.equal(response.status, 403);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stores independent staff day-off and work-time preferences with weekly-range review", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-staff-preferences-"));
+  const database = openDatabase(resolve(directory, "preferences.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-a", "preference-admin", "架空 管理者");
+    database.prepare(
+      "INSERT INTO staff_members (id, staff_code, name, employment_start_date, status) VALUES (?, ?, ?, ?, 'active')",
+    ).run("staff-a", "ST0001", "架空 職員", "2026-01-01");
+    database.prepare(
+      `INSERT INTO staff_work_condition_versions
+       (id, staff_id, valid_from, employment_type, created_by_administrator_id)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run("condition-a", "staff-a", "2026-01-01", "常勤", "admin-a");
+    database.prepare(
+      `INSERT INTO staff_weekly_availability
+       (work_condition_version_id, weekday, available, start_time, end_time)
+       VALUES (?, 4, 1, '09:00', '18:00')`,
+    ).run("condition-a");
+
+    const actor = { type: "administrator", id: "admin-a", role: "normal", mustChangePassword: false };
+    const family = { type: "family", id: "family-account", familyId: "family-a", mustChangePassword: false };
+    const service = createStaffScheduleService({ database, now: () => new Date("2026-08-25T11:00:00.000Z") });
+
+    let september = service.saveStaffPreference(actor, {
+      targetMonth: "2026-09",
+      staffId: "staff-a",
+      date: "2026-09-10",
+      preferenceType: "day_off",
+    });
+    let preference = september.staff[0].selectedPreference;
+    assert.equal(preference.preferenceType, "day_off");
+    assert.equal(preference.effectiveAvailability.available, false);
+
+    september = service.saveStaffPreference(actor, {
+      targetMonth: "2026-09",
+      staffId: "staff-a",
+      date: "2026-09-10",
+      preferenceType: "work_time",
+      startTime: "10:00",
+      endTime: "16:00",
+    });
+    preference = september.staff[0].selectedPreference;
+    assert.equal(preference.preferenceType, "work_time");
+    assert.equal(preference.requiresAdministratorReview, false);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM staff_schedule_preferences WHERE staff_id = ? AND date = ?",
+    ).get("staff-a", "2026-09-10").count, 1);
+
+    september = service.saveStaffPreference(actor, {
+      targetMonth: "2026-09",
+      staffId: "staff-a",
+      date: "2026-09-10",
+      preferenceType: "work_time",
+      startTime: "08:00",
+      endTime: "17:00",
+    });
+    preference = september.staff[0].selectedPreference;
+    assert.equal(preference.requiresAdministratorReview, true);
+    assert.match(preference.reviewMessage, /管理者確認/);
+    assert.deepEqual(preference.effectiveAvailability, {
+      source: "preference",
+      available: true,
+      startTime: "08:00",
+      endTime: "17:00",
+    });
+
+    service.saveStaffPreference(actor, {
+      targetMonth: "2026-10",
+      staffId: "staff-a",
+      date: "2026-10-01",
+      preferenceType: "day_off",
+    });
+    assert.deepEqual(service.staffPreferencesForMonth(actor, { targetMonth: "2026-09", staffId: "staff-a" })
+      .preferences.map((entry) => entry.date), ["2026-09-10"]);
+    assert.deepEqual(service.staffPreferencesForMonth(actor, { targetMonth: "2026-10", staffId: "staff-a" })
+      .preferences.map((entry) => entry.date), ["2026-10-01"]);
+
+    assert.throws(() => service.saveStaffPreference(actor, {
+      targetMonth: "2026-09", staffId: "staff-a", date: "2026-09-10",
+      preferenceType: "work_time", startTime: "09:05", endTime: "18:00",
+    }), (error) => error.code === "INVALID_TIME");
+    assert.throws(() => service.saveStaffPreference(actor, {
+      targetMonth: "2026-09", staffId: "staff-a", date: "2026-09-10",
+      preferenceType: "work_time", startTime: "18:00", endTime: "09:00",
+    }), (error) => error.code === "INVALID_TIME_RANGE");
+    assert.throws(() => service.saveStaffPreference(family, {
+      targetMonth: "2026-09", staffId: "staff-a", date: "2026-09-10", preferenceType: "day_off",
+    }), (error) => error.code === "FORBIDDEN");
+
+    september = service.saveStaffPreference(actor, {
+      targetMonth: "2026-09",
+      staffId: "staff-a",
+      date: "2026-09-10",
+      preferenceType: "none",
+    });
+    assert.equal(september.staff[0].selectedPreference.preferenceType, "none");
+    assert.equal(service.staffPreferencesForMonth(actor, { targetMonth: "2026-09" }).preferences.length, 0);
+    assert.equal(service.staffPreferencesForMonth(actor, { targetMonth: "2026-10" }).preferences.length, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_days").get().count, 0);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM operation_logs WHERE target_type = 'staff_schedule_preference'",
+    ).get().count, 5);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

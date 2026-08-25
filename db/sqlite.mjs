@@ -53,6 +53,7 @@ export const REQUIRED_APPLICATION_TABLES_BY_MIGRATION = {
     "staff_schedule_segments",
     "staff_schedule_versions",
   ],
+  "0009_exotic_skin.sql": ["staff_schedule_preferences"],
 };
 
 export const REQUIRED_APPLICATION_TABLES = [

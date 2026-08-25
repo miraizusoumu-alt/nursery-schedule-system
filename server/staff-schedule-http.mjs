@@ -26,6 +26,9 @@ export async function handleStaffScheduleApiRequest(request, { service, authServ
     if (request.method === "PUT" && url.pathname === "/api/admin/staff-schedules/day") {
       return json({ ok: true, schedule: service.saveScheduleDay(session.actor, body) });
     }
+    if (request.method === "PUT" && url.pathname === "/api/admin/staff-schedules/preference") {
+      return json({ ok: true, schedule: service.saveStaffPreference(session.actor, body) });
+    }
     if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules/confirm") {
       return json({ ok: true, schedule: service.confirmMonthlySchedule(session.actor, body) });
     }

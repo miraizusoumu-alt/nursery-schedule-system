@@ -117,6 +117,59 @@
   gap: 14px;
 }
 
+.staff-preference-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.staff-preference-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.staff-preference-options label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 12px;
+  font-weight: 750;
+}
+
+.staff-preference-options input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.staff-preference-times {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 220px));
+  gap: 12px;
+}
+
+.staff-preference-times label {
+  display: grid;
+  gap: 6px;
+}
+
+.staff-preference-times label > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.staff-preference-weekly {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
 .staff-schedule-segments {
   display: grid;
   gap: 10px;
@@ -154,6 +207,18 @@
 
   .staff-schedule-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-preference-options,
+  .staff-preference-times {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .staff-preference-options label,
+  .staff-preference-times label,
+  .staff-preference-times select {
+    width: 100%;
   }
 
   .staff-schedule-segments > div {

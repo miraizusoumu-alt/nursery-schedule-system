@@ -322,6 +322,39 @@ export const staffScheduleSegments = sqliteTable(
   ],
 );
 
+export const staffSchedulePreferences = sqliteTable(
+  "staff_schedule_preferences",
+  {
+    id: text("id").primaryKey(),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    date: text("date").notNull(),
+    preferenceType: text("preference_type").notNull(),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    createdByAdministratorId: text("created_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    updatedByAdministratorId: text("updated_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_schedule_preferences_staff_date").on(table.staffId, table.date),
+    index("idx_staff_schedule_preferences_date").on(table.date, table.staffId),
+    check("chk_staff_schedule_preferences_date", sql`${table.date} glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+    check("chk_staff_schedule_preferences_type", sql`${table.preferenceType} in ('day_off', 'work_time')`),
+    check(
+      "chk_staff_schedule_preferences_payload",
+      sql`(${table.preferenceType} = 'day_off' and ${table.startTime} is null and ${table.endTime} is null)
+          or (${table.preferenceType} = 'work_time'
+            and ${table.startTime} glob '[0-2][0-9]:[0-5][0-9]'
+            and ${table.endTime} glob '[0-2][0-9]:[0-5][0-9]'
+            and substr(${table.startTime}, 4, 2) in ('00', '15', '30', '45')
+            and substr(${table.endTime}, 4, 2) in ('00', '15', '30', '45')
+            and ${table.startTime} >= '06:30'
+            and ${table.endTime} <= '20:30'
+            and ${table.startTime} < ${table.endTime})`,
+    ),
+  ],
+);
+
 export const basicUsagePatterns = sqliteTable(
   "basic_usage_patterns",
   {
