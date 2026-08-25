@@ -30,8 +30,11 @@ function fileTimestamp(now = new Date()) {
 
 function verifyOpenDatabase(database) {
   const report = inspectDatabase(database);
-  if (!report.integrityOk || !report.foreignKeysOk || report.missingTables.length > 0) {
-    throw new Error(`DB検証に失敗しました。不足テーブル: ${report.missingTables.join(", ") || "なし"}`);
+  if (!report.integrityOk || !report.foreignKeysOk || !report.migrationsOk || report.missingTables.length > 0) {
+    throw new Error(
+      `DB検証に失敗しました。migration異常: ${report.migrationErrors.join(", ") || "なし"} / `
+      + `不足テーブル: ${report.missingTables.join(", ") || "なし"}`,
+    );
   }
   return report;
 }

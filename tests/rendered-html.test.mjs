@@ -251,15 +251,17 @@ test("adds the protected database-backed parent schedule screen without changing
 });
 
 test("connects protected administrator schedule operations without changing the prototype", async () => {
-  const [page, adminPage, accountsPage, adminClient, adminNavigation, childManagement, headcount, adminHttp, gateway, authHttp, worker, familyService, css] = await Promise.all([
+  const [page, adminPage, accountsPage, adminClient, adminNavigation, childManagement, staffSchedule, headcount, adminHttp, staffScheduleHttp, gateway, authHttp, worker, familyService, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/admin/schedules/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/admin/accounts/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminScheduleClient.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminNavigation.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminChildManagement.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/admin/AdminStaffScheduleManagement.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/admin/AdminMonthlyHeadcount.tsx", import.meta.url), "utf8"),
     readFile(new URL("../server/admin-schedule-http.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/staff-schedule-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/auth-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
@@ -284,7 +286,10 @@ test("connects protected administrator schedule operations without changing the 
   assert.doesNotMatch(adminClient, /提出期限を延長|延長後期限|提出版 第|現在採用中 第/);
   assert.doesNotMatch(adminClient, /\{period\.status\}/);
   assert.match(adminClient, /AdminStaffManagement/);
+  assert.match(adminClient, /AdminStaffScheduleManagement/);
   assert.match(adminClient, /AdminMonthlyHeadcount/);
+  assert.match(staffSchedule, /月間職員シフト|この月のシフトを作成|日別シフトを保存|シフトを確定|シフトを修正/);
+  assert.match(staffSchedule, /選択日|月間|公休|連続勤務/);
   assert.match(childManagement, /＋ 園児を新規登録|園児を選択してください|基本利用予定|基本利用パターン履歴/);
   assert.doesNotMatch(childManagement, /<span>変更理由<\/span>/);
   assert.match(childManagement, /保護者ログインアカウント未作成/);
@@ -305,7 +310,10 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(adminClient, /EFFECTIVE_VERSION_CHANGED|NO_CHANGES/);
   assert.match(adminHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
   assert.match(adminHttp, /assertCsrf/);
+  assert.match(staffScheduleHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
+  assert.match(staffScheduleHttp, /assertCsrf/);
   assert.match(gateway, /handleAdminScheduleApiRequest/);
+  assert.match(gateway, /handleStaffScheduleApiRequest/);
   assert.match(authHttp, /\/admin\/schedules/);
   assert.match(worker, /\/admin\/schedules/);
   assert.match(familyService, /administratorScheduleDashboard|administratorRevisionHistory/);

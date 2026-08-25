@@ -18,6 +18,153 @@
   --shadow: 0 16px 38px rgba(35, 55, 48, 0.1);
 }
 
+.staff-schedule-management {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.staff-schedule-period-controls,
+.staff-schedule-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.staff-schedule-period-controls label,
+.staff-schedule-selection label,
+.staff-schedule-editor > label,
+.staff-schedule-segments label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.staff-schedule-period-controls label > span,
+.staff-schedule-selection label > span,
+.staff-schedule-editor > label > span,
+.staff-schedule-segments label > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.staff-schedule-history {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.staff-schedule-history summary {
+  cursor: pointer;
+  color: #205d4a;
+  font-weight: 800;
+}
+
+.staff-schedule-history > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.staff-schedule-history button.active {
+  border-color: #286c56;
+  background: #eaf5f0;
+}
+
+.staff-schedule-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.staff-schedule-metrics > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.staff-schedule-metrics > div.warning {
+  border-color: #d59a43;
+  background: #fff9ed;
+}
+
+.staff-schedule-metrics span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.staff-schedule-metrics strong {
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
+.staff-schedule-baseline {
+  margin: 0;
+  color: #315b4d;
+  font-weight: 750;
+}
+
+.staff-schedule-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.staff-schedule-segments {
+  display: grid;
+  gap: 10px;
+}
+
+.staff-schedule-segments > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(105px, 0.8fr)) minmax(150px, 1.2fr) 40px;
+  gap: 10px;
+  align-items: end;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.staff-schedule-segments .icon-button {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 1.1rem;
+}
+
+@media (max-width: 719px) {
+  .staff-schedule-period-controls,
+  .staff-schedule-selection {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .staff-schedule-period-controls > *,
+  .staff-schedule-selection > * {
+    width: 100%;
+  }
+
+  .staff-schedule-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-schedule-segments > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-schedule-segments > div label:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,36 +10,53 @@ export const DEFAULT_DATABASE_PATH = resolve(PROJECT_ROOT, "local-data", "nurser
 export const DEFAULT_MIGRATIONS_PATH = resolve(PROJECT_ROOT, "drizzle");
 export const VERIFICATION_DATABASE_DIRECTORY = resolve(PROJECT_ROOT, ".verification");
 
+export const REQUIRED_APPLICATION_TABLES_BY_MIGRATION = {
+  "0000_condemned_exodus.sql": [
+    "administrators",
+    "basic_usage_patterns",
+    "change_histories",
+    "change_history_reasons",
+    "children",
+    "closure_days",
+    "daily_schedules",
+    "families",
+    "family_accounts",
+    "family_children",
+    "family_submissions",
+    "monthly_schedules",
+    "operation_logs",
+    "standard_reason_histories",
+    "standard_reasons",
+    "submission_periods",
+  ],
+  "0001_lowly_mercury.sql": [],
+  "0002_shallow_hex.sql": ["auth_login_attempts", "auth_sessions", "auth_settings"],
+  "0003_loose_luckman.sql": [
+    "basic_usage_pattern_histories",
+    "family_deadline_extensions",
+    "family_submission_version_children",
+    "family_submission_version_days",
+    "family_submission_versions",
+  ],
+  "0004_tired_pandemic.sql": [
+    "staff_members",
+    "staff_qualifications",
+    "staff_weekly_availability",
+    "staff_work_condition_versions",
+  ],
+  "0005_zippy_nehzno.sql": [],
+  "0006_parallel_toro.sql": [],
+  "0007_reflective_zombie.sql": ["staff_roles"],
+  "0008_majestic_black_crow.sql": [
+    "staff_schedule_days",
+    "staff_schedule_months",
+    "staff_schedule_segments",
+    "staff_schedule_versions",
+  ],
+};
+
 export const REQUIRED_APPLICATION_TABLES = [
-  "administrators",
-  "auth_login_attempts",
-  "auth_sessions",
-  "auth_settings",
-  "basic_usage_patterns",
-  "basic_usage_pattern_histories",
-  "change_histories",
-  "change_history_reasons",
-  "children",
-  "closure_days",
-  "daily_schedules",
-  "families",
-  "family_accounts",
-  "family_children",
-  "family_deadline_extensions",
-  "family_submissions",
-  "family_submission_version_children",
-  "family_submission_version_days",
-  "family_submission_versions",
-  "monthly_schedules",
-  "operation_logs",
-  "standard_reason_histories",
-  "standard_reasons",
-  "staff_members",
-  "staff_qualifications",
-  "staff_roles",
-  "staff_weekly_availability",
-  "staff_work_condition_versions",
-  "submission_periods",
+  ...new Set(Object.values(REQUIRED_APPLICATION_TABLES_BY_MIGRATION).flat()),
 ];
 
 export function resolveDatabasePath(value = process.env.NURSERY_DB_PATH || DEFAULT_DATABASE_PATH) {
@@ -88,6 +105,16 @@ function migrationChecksum(sqlText) {
   return createHash("sha256").update(sqlText, "utf8").digest("hex");
 }
 
+function migrationManifest(migrationsPath = DEFAULT_MIGRATIONS_PATH) {
+  return readdirSync(migrationsPath)
+    .filter((name) => name.endsWith(".sql"))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({
+      name,
+      checksum: migrationChecksum(readFileSync(resolve(migrationsPath, name), "utf8")),
+    }));
+}
+
 export async function applyMigrations(database, migrationsPath = DEFAULT_MIGRATIONS_PATH) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -131,18 +158,53 @@ export async function applyMigrations(database, migrationsPath = DEFAULT_MIGRATI
   return { applied: newlyApplied, total: fileNames.length };
 }
 
-export function inspectDatabase(database) {
+export function inspectDatabase(database, migrationsPath = DEFAULT_MIGRATIONS_PATH) {
   const integrityRows = database.prepare("PRAGMA integrity_check").all();
   const foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all();
   const tables = database
     .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
     .all()
     .map((row) => row.name);
-  const missingTables = REQUIRED_APPLICATION_TABLES.filter((name) => !tables.includes(name));
+  const migrationErrors = [];
+  const manifest = migrationManifest(migrationsPath);
+  const appliedMigrations = tables.includes("_schema_migrations")
+    ? database.prepare("SELECT name, checksum FROM _schema_migrations ORDER BY name").all()
+    : [];
+
+  if (!tables.includes("_schema_migrations")) {
+    migrationErrors.push("migration履歴テーブルがありません。");
+  } else if (appliedMigrations.length === 0) {
+    migrationErrors.push("適用済みmigrationがありません。");
+  }
+
+  const expectedPrefix = manifest.slice(0, appliedMigrations.length);
+  for (let index = 0; index < appliedMigrations.length; index += 1) {
+    const applied = appliedMigrations[index];
+    const expected = expectedPrefix[index];
+    if (!expected || applied.name !== expected.name) {
+      migrationErrors.push(`migration履歴が連続していません: ${applied.name}`);
+      continue;
+    }
+    if (applied.checksum !== expected.checksum) {
+      migrationErrors.push(`migrationのhashが一致しません: ${applied.name}`);
+    }
+    if (!Object.hasOwn(REQUIRED_APPLICATION_TABLES_BY_MIGRATION, applied.name)) {
+      migrationErrors.push(`migrationの必須テーブル定義がありません: ${applied.name}`);
+    }
+  }
+
+  const requiredTables = [
+    ...new Set(appliedMigrations.flatMap(({ name }) => REQUIRED_APPLICATION_TABLES_BY_MIGRATION[name] || [])),
+  ];
+  const missingTables = requiredTables.filter((name) => !tables.includes(name));
   return {
     integrityOk: integrityRows.length === 1 && integrityRows[0].integrity_check === "ok",
     foreignKeysOk: foreignKeyErrors.length === 0,
+    migrationsOk: migrationErrors.length === 0,
+    appliedMigrations: appliedMigrations.map(({ name }) => name),
+    migrationErrors,
     tables,
+    requiredTables,
     missingTables,
   };
 }

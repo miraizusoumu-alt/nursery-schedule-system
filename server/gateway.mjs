@@ -4,10 +4,12 @@ import { applyMigrations, openDatabase, resolveRuntimeDatabasePath } from "../db
 import { createAuthService } from "../lib/server/auth/service.mjs";
 import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
 import { createStaffManagementService } from "../lib/server/staff-management/service.mjs";
+import { createStaffScheduleService } from "../lib/server/staff-schedule/service.mjs";
 import { authorizeProtectedPage, handleAuthApiRequest } from "./auth-http.mjs";
 import { handleAdminScheduleApiRequest } from "./admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "./family-schedule-http.mjs";
 import { handleStaffManagementApiRequest } from "./staff-management-http.mjs";
+import { handleStaffScheduleApiRequest } from "./staff-schedule-http.mjs";
 
 const MAX_AUTH_BODY_BYTES = 1024 * 1024;
 const GATEWAY_SECRET_HEADER = "x-nursery-gateway-secret";
@@ -120,6 +122,7 @@ export async function createGateway({
   const service = createAuthService({ database });
   const familyScheduleService = createFamilyScheduleService({ database });
   const staffManagementService = createStaffManagementService({ database });
+  const staffScheduleService = createStaffScheduleService({ database });
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {
@@ -128,6 +131,8 @@ export async function createGateway({
         const request = await toFetchRequest(incoming, publicPort, true);
         const adminScheduleResponse = await handleAdminScheduleApiRequest(request, { service: familyScheduleService, authService: service });
         if (adminScheduleResponse) return await sendFetchResponse(adminScheduleResponse, outgoing);
+        const staffScheduleResponse = await handleStaffScheduleApiRequest(request, { service: staffScheduleService, authService: service });
+        if (staffScheduleResponse) return await sendFetchResponse(staffScheduleResponse, outgoing);
         const staffManagementResponse = await handleStaffManagementApiRequest(request, { service: staffManagementService, authService: service });
         if (staffManagementResponse) return await sendFetchResponse(staffManagementResponse, outgoing);
         const familyScheduleResponse = await handleFamilyScheduleApiRequest(request, { service: familyScheduleService, authService: service });

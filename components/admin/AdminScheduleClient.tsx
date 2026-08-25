@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminChildManagement } from "@/components/admin/AdminChildManagement";
 import { AdminMonthlyHeadcount } from "@/components/admin/AdminMonthlyHeadcount";
 import { AdminStaffManagement } from "@/components/admin/AdminStaffManagement";
+import { AdminStaffScheduleManagement } from "@/components/admin/AdminStaffScheduleManagement";
 import { AdminNavigation, type AdminPrimaryArea } from "@/components/admin/AdminNavigation";
 import { AdminIcon } from "@/components/ui/AdminIcon";
 import { ApiError, api } from "@/lib/client/api";
@@ -242,7 +243,7 @@ export function AdminScheduleClient() {
 
   useEffect(() => {
     const area = new URLSearchParams(window.location.search).get("area");
-    if (area !== "children" && area !== "schedules" && area !== "staff" && area !== "reports") return;
+    if (area !== "children" && area !== "schedules" && area !== "staff" && area !== "shift" && area !== "reports") return;
     const timer = window.setTimeout(() => setActiveArea(area), 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -368,13 +369,15 @@ export function AdminScheduleClient() {
           <button type="button" onClick={() => selectArea("children")}><AdminIcon name="child" size={28} /><span><strong>園児</strong><small>園児情報・保護者アカウントとの登録・基本利用時間</small></span></button>
           <button type="button" onClick={() => selectArea("schedules")}><AdminIcon name="calendar" size={28} /><span><strong>利用予定</strong><small>対象月・提出状況・休園日・園での修正</small></span></button>
           <button type="button" onClick={() => selectArea("staff")}><AdminIcon name="staff" size={28} /><span><strong>職員</strong><small>職員情報・担当区分・曜日別勤務可能時間</small></span></button>
-          <div className="admin-purpose-future" aria-label="シフトは次段階で実装予定"><AdminIcon name="clock" size={28} /><span><strong>シフト</strong><small>希望休・希望勤務時間・シフト作成は次段階で実装します</small></span></div>
+          <button type="button" onClick={() => selectArea("shift")}><AdminIcon name="clock" size={28} /><span><strong>シフト</strong><small>月間シフト・予定実労働時間・公休・連続勤務</small></span></button>
           <button type="button" onClick={() => selectArea("reports")}><AdminIcon name="report" size={28} /><span><strong>集計・Excel</strong><small>月間人数・人数変化時刻・Excel出力</small></span></button>
           <a href="/admin/accounts"><AdminIcon name="account" size={28} /><span><strong>アカウント</strong><small>保護者・家庭と管理者のアカウント管理</small></span></a>
         </div>
       </section> : null}
 
       <div hidden={activeArea !== "staff"}><AdminStaffManagement /></div>
+
+      <div hidden={activeArea !== "shift"}><AdminStaffScheduleManagement /></div>
 
       <div hidden={activeArea !== "children"}><AdminChildManagement /></div>
 

@@ -1,0 +1,3984 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "edb9cc7a-ef32-4c03-8265-c5cd4775ece0",
+  "prevId": "002a0095-2b9a-45e1-b182-3a3cb947a4f6",
+  "tables": {
+    "administrators": {
+      "name": "administrators",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "login_id": {
+          "name": "login_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'normal'"
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "must_change_password": {
+          "name": "must_change_password",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "temporary_password_issued_at": {
+          "name": "temporary_password_issued_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "password_changed_at": {
+          "name": "password_changed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "credential_version": {
+          "name": "credential_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "stopped_at": {
+          "name": "stopped_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_administrators_login_id": {
+          "name": "uq_administrators_login_id",
+          "columns": [
+            "login_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_administrators_role": {
+          "name": "chk_administrators_role",
+          "value": "\"administrators\".\"role\" in ('normal', 'master')"
+        },
+        "chk_administrators_status": {
+          "name": "chk_administrators_status",
+          "value": "\"administrators\".\"status\" in ('active', 'stopped')"
+        }
+      }
+    },
+    "auth_login_attempts": {
+      "name": "auth_login_attempts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "login_scope": {
+          "name": "login_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "login_id_hash": {
+          "name": "login_id_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_hash": {
+          "name": "source_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "success": {
+          "name": "success",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "attempted_at": {
+          "name": "attempted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_auth_login_attempts_login": {
+          "name": "idx_auth_login_attempts_login",
+          "columns": [
+            "login_scope",
+            "login_id_hash",
+            "attempted_at"
+          ],
+          "isUnique": false
+        },
+        "idx_auth_login_attempts_source": {
+          "name": "idx_auth_login_attempts_source",
+          "columns": [
+            "login_scope",
+            "source_hash",
+            "attempted_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_auth_login_attempts_scope": {
+          "name": "chk_auth_login_attempts_scope",
+          "value": "\"auth_login_attempts\".\"login_scope\" in ('family', 'administrator')"
+        }
+      }
+    },
+    "auth_sessions": {
+      "name": "auth_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subject_type": {
+          "name": "subject_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_account_id": {
+          "name": "family_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "administrator_id": {
+          "name": "administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "csrf_token_hash": {
+          "name": "csrf_token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "credential_version": {
+          "name": "credential_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "issued_at": {
+          "name": "issued_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "invalidated_at": {
+          "name": "invalidated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "invalidation_reason": {
+          "name": "invalidation_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "uq_auth_sessions_token_hash": {
+          "name": "uq_auth_sessions_token_hash",
+          "columns": [
+            "token_hash"
+          ],
+          "isUnique": true
+        },
+        "idx_auth_sessions_family_account": {
+          "name": "idx_auth_sessions_family_account",
+          "columns": [
+            "family_account_id",
+            "expires_at"
+          ],
+          "isUnique": false
+        },
+        "idx_auth_sessions_administrator": {
+          "name": "idx_auth_sessions_administrator",
+          "columns": [
+            "administrator_id",
+            "expires_at"
+          ],
+          "isUnique": false
+        },
+        "idx_auth_sessions_expiry": {
+          "name": "idx_auth_sessions_expiry",
+          "columns": [
+            "expires_at",
+            "invalidated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "auth_sessions_family_account_id_family_accounts_id_fk": {
+          "name": "auth_sessions_family_account_id_family_accounts_id_fk",
+          "tableFrom": "auth_sessions",
+          "tableTo": "family_accounts",
+          "columnsFrom": [
+            "family_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "auth_sessions_administrator_id_administrators_id_fk": {
+          "name": "auth_sessions_administrator_id_administrators_id_fk",
+          "tableFrom": "auth_sessions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_auth_sessions_subject_type": {
+          "name": "chk_auth_sessions_subject_type",
+          "value": "\"auth_sessions\".\"subject_type\" in ('family', 'administrator')"
+        },
+        "chk_auth_sessions_subject_reference": {
+          "name": "chk_auth_sessions_subject_reference",
+          "value": "(\"auth_sessions\".\"subject_type\" = 'family' and \"auth_sessions\".\"family_account_id\" is not null and \"auth_sessions\".\"administrator_id\" is null)\n          or (\"auth_sessions\".\"subject_type\" = 'administrator' and \"auth_sessions\".\"family_account_id\" is null and \"auth_sessions\".\"administrator_id\" is not null)"
+        }
+      }
+    },
+    "auth_settings": {
+      "name": "auth_settings",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value_json": {
+          "name": "value_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by_administrator_id": {
+          "name": "updated_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_auth_settings_updated_by": {
+          "name": "idx_auth_settings_updated_by",
+          "columns": [
+            "updated_by_administrator_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "auth_settings_updated_by_administrator_id_administrators_id_fk": {
+          "name": "auth_settings_updated_by_administrator_id_administrators_id_fk",
+          "tableFrom": "auth_settings",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "updated_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "basic_usage_pattern_histories": {
+      "name": "basic_usage_pattern_histories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "basic_usage_pattern_id": {
+          "name": "basic_usage_pattern_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "child_id": {
+          "name": "child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "weekday": {
+          "name": "weekday",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "before_json": {
+          "name": "before_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "after_json": {
+          "name": "after_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changed_by_administrator_id": {
+          "name": "changed_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_basic_usage_pattern_histories_child": {
+          "name": "idx_basic_usage_pattern_histories_child",
+          "columns": [
+            "child_id",
+            "changed_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "basic_usage_pattern_histories_basic_usage_pattern_id_basic_usage_patterns_id_fk": {
+          "name": "basic_usage_pattern_histories_basic_usage_pattern_id_basic_usage_patterns_id_fk",
+          "tableFrom": "basic_usage_pattern_histories",
+          "tableTo": "basic_usage_patterns",
+          "columnsFrom": [
+            "basic_usage_pattern_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "basic_usage_pattern_histories_child_id_children_id_fk": {
+          "name": "basic_usage_pattern_histories_child_id_children_id_fk",
+          "tableFrom": "basic_usage_pattern_histories",
+          "tableTo": "children",
+          "columnsFrom": [
+            "child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "basic_usage_pattern_histories_changed_by_administrator_id_administrators_id_fk": {
+          "name": "basic_usage_pattern_histories_changed_by_administrator_id_administrators_id_fk",
+          "tableFrom": "basic_usage_pattern_histories",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "changed_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_basic_usage_pattern_histories_weekday": {
+          "name": "chk_basic_usage_pattern_histories_weekday",
+          "value": "\"basic_usage_pattern_histories\".\"weekday\" between 1 and 6"
+        }
+      }
+    },
+    "basic_usage_patterns": {
+      "name": "basic_usage_patterns",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "child_id": {
+          "name": "child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "weekday": {
+          "name": "weekday",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "arrival_time": {
+          "name": "arrival_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "departure_time": {
+          "name": "departure_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "valid_from": {
+          "name": "valid_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "valid_to": {
+          "name": "valid_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_basic_usage_patterns_child_weekday": {
+          "name": "uq_basic_usage_patterns_child_weekday",
+          "columns": [
+            "child_id",
+            "weekday"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "basic_usage_patterns_child_id_children_id_fk": {
+          "name": "basic_usage_patterns_child_id_children_id_fk",
+          "tableFrom": "basic_usage_patterns",
+          "tableTo": "children",
+          "columnsFrom": [
+            "child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_basic_usage_patterns_weekday": {
+          "name": "chk_basic_usage_patterns_weekday",
+          "value": "\"basic_usage_patterns\".\"weekday\" between 1 and 6"
+        }
+      }
+    },
+    "change_histories": {
+      "name": "change_histories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "child_id": {
+          "name": "child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "target_month": {
+          "name": "target_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "target_date": {
+          "name": "target_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "field_name": {
+          "name": "field_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "before_json": {
+          "name": "before_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "after_json": {
+          "name": "after_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reason_text": {
+          "name": "reason_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_change_histories_child_month": {
+          "name": "idx_change_histories_child_month",
+          "columns": [
+            "child_id",
+            "target_month"
+          ],
+          "isUnique": false
+        },
+        "idx_change_histories_changed_at": {
+          "name": "idx_change_histories_changed_at",
+          "columns": [
+            "changed_at"
+          ],
+          "isUnique": false
+        },
+        "idx_change_histories_actor": {
+          "name": "idx_change_histories_actor",
+          "columns": [
+            "actor_type",
+            "actor_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "change_histories_family_id_families_id_fk": {
+          "name": "change_histories_family_id_families_id_fk",
+          "tableFrom": "change_histories",
+          "tableTo": "families",
+          "columnsFrom": [
+            "family_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "change_histories_child_id_children_id_fk": {
+          "name": "change_histories_child_id_children_id_fk",
+          "tableFrom": "change_histories",
+          "tableTo": "children",
+          "columnsFrom": [
+            "child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "change_history_reasons": {
+      "name": "change_history_reasons",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "change_history_id": {
+          "name": "change_history_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "standard_reason_id": {
+          "name": "standard_reason_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reason_name_snapshot": {
+          "name": "reason_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "idx_change_history_reasons_history": {
+          "name": "idx_change_history_reasons_history",
+          "columns": [
+            "change_history_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "change_history_reasons_change_history_id_change_histories_id_fk": {
+          "name": "change_history_reasons_change_history_id_change_histories_id_fk",
+          "tableFrom": "change_history_reasons",
+          "tableTo": "change_histories",
+          "columnsFrom": [
+            "change_history_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "change_history_reasons_standard_reason_id_standard_reasons_id_fk": {
+          "name": "change_history_reasons_standard_reason_id_standard_reasons_id_fk",
+          "tableFrom": "change_history_reasons",
+          "tableTo": "standard_reasons",
+          "columnsFrom": [
+            "standard_reason_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "children": {
+      "name": "children",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "child_code": {
+          "name": "child_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kana": {
+          "name": "kana",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_name_kana": {
+          "name": "last_name_kana",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "first_name_kana": {
+          "name": "first_name_kana",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "class_name": {
+          "name": "class_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "birth_date": {
+          "name": "birth_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "enrollment_date": {
+          "name": "enrollment_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "withdrawal_date": {
+          "name": "withdrawal_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "age_group_override": {
+          "name": "age_group_override",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'enrolled'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_children_child_code": {
+          "name": "uq_children_child_code",
+          "columns": [
+            "child_code"
+          ],
+          "isUnique": true
+        },
+        "idx_children_enrollment_dates": {
+          "name": "idx_children_enrollment_dates",
+          "columns": [
+            "enrollment_date",
+            "withdrawal_date"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_children_status": {
+          "name": "chk_children_status",
+          "value": "\"children\".\"status\" in ('enrolled', 'withdrawn')"
+        }
+      }
+    },
+    "closure_days": {
+      "name": "closure_days",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'closed'"
+        },
+        "parent_input_allowed": {
+          "name": "parent_input_allowed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_closure_days_date": {
+          "name": "uq_closure_days_date",
+          "columns": [
+            "date"
+          ],
+          "isUnique": true
+        },
+        "idx_closure_days_date": {
+          "name": "idx_closure_days_date",
+          "columns": [
+            "date"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "daily_schedules": {
+      "name": "daily_schedules",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "monthly_schedule_id": {
+          "name": "monthly_schedule_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "usage_status": {
+          "name": "usage_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'off'"
+        },
+        "arrival_time": {
+          "name": "arrival_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "departure_time": {
+          "name": "departure_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'base'"
+        },
+        "changed": {
+          "name": "changed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_daily_schedules_month_date": {
+          "name": "uq_daily_schedules_month_date",
+          "columns": [
+            "monthly_schedule_id",
+            "date"
+          ],
+          "isUnique": true
+        },
+        "idx_daily_schedules_date_status": {
+          "name": "idx_daily_schedules_date_status",
+          "columns": [
+            "date",
+            "usage_status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "daily_schedules_monthly_schedule_id_monthly_schedules_id_fk": {
+          "name": "daily_schedules_monthly_schedule_id_monthly_schedules_id_fk",
+          "tableFrom": "daily_schedules",
+          "tableTo": "monthly_schedules",
+          "columnsFrom": [
+            "monthly_schedule_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_daily_schedules_usage_status": {
+          "name": "chk_daily_schedules_usage_status",
+          "value": "\"daily_schedules\".\"usage_status\" in ('using', 'off', 'closed', 'not_enrolled')"
+        },
+        "chk_daily_schedules_source": {
+          "name": "chk_daily_schedules_source",
+          "value": "\"daily_schedules\".\"source\" in ('base', 'weekday', 'daily', 'parent', 'admin')"
+        }
+      }
+    },
+    "families": {
+      "name": "families",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_code": {
+          "name": "family_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "issued_at": {
+          "name": "issued_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "handed_over_at": {
+          "name": "handed_over_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "stop_date": {
+          "name": "stop_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_families_family_code": {
+          "name": "uq_families_family_code",
+          "columns": [
+            "family_code"
+          ],
+          "isUnique": true
+        },
+        "idx_families_status": {
+          "name": "idx_families_status",
+          "columns": [
+            "status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_families_status": {
+          "name": "chk_families_status",
+          "value": "\"families\".\"status\" in ('active', 'stopped')"
+        }
+      }
+    },
+    "family_accounts": {
+      "name": "family_accounts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "login_id": {
+          "name": "login_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "must_change_password": {
+          "name": "must_change_password",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "temporary_password_issued_at": {
+          "name": "temporary_password_issued_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "password_changed_at": {
+          "name": "password_changed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "credential_version": {
+          "name": "credential_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "stopped_at": {
+          "name": "stopped_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_family_accounts_family_id": {
+          "name": "uq_family_accounts_family_id",
+          "columns": [
+            "family_id"
+          ],
+          "isUnique": true
+        },
+        "uq_family_accounts_login_id": {
+          "name": "uq_family_accounts_login_id",
+          "columns": [
+            "login_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "family_accounts_family_id_families_id_fk": {
+          "name": "family_accounts_family_id_families_id_fk",
+          "tableFrom": "family_accounts",
+          "tableTo": "families",
+          "columnsFrom": [
+            "family_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "family_children": {
+      "name": "family_children",
+      "columns": {
+        "family_id": {
+          "name": "family_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "child_id": {
+          "name": "child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "relationship_label": {
+          "name": "relationship_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'保護者'"
+        },
+        "is_primary": {
+          "name": "is_primary",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "active_from": {
+          "name": "active_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active_to": {
+          "name": "active_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_family_children_child_id": {
+          "name": "idx_family_children_child_id",
+          "columns": [
+            "child_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "family_children_family_id_families_id_fk": {
+          "name": "family_children_family_id_families_id_fk",
+          "tableFrom": "family_children",
+          "tableTo": "families",
+          "columnsFrom": [
+            "family_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "family_children_child_id_children_id_fk": {
+          "name": "family_children_child_id_children_id_fk",
+          "tableFrom": "family_children",
+          "tableTo": "children",
+          "columnsFrom": [
+            "child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "family_children_family_id_child_id_pk": {
+          "columns": [
+            "family_id",
+            "child_id"
+          ],
+          "name": "family_children_family_id_child_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "family_deadline_extensions": {
+      "name": "family_deadline_extensions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submission_period_id": {
+          "name": "submission_period_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "extended_deadline_at": {
+          "name": "extended_deadline_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "administrator_id": {
+          "name": "administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_family_deadline_extensions_family_period": {
+          "name": "uq_family_deadline_extensions_family_period",
+          "columns": [
+            "family_id",
+            "submission_period_id"
+          ],
+          "isUnique": true
+        },
+        "idx_family_deadline_extensions_period": {
+          "name": "idx_family_deadline_extensions_period",
+          "columns": [
+            "submission_period_id",
+            "extended_deadline_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "family_deadline_extensions_family_id_families_id_fk": {
+          "name": "family_deadline_extensions_family_id_families_id_fk",
+          "tableFrom": "family_deadline_extensions",
+          "tableTo": "families",
+          "columnsFrom": [
+            "family_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_deadline_extensions_submission_period_id_submission_periods_id_fk": {
+          "name": "family_deadline_extensions_submission_period_id_submission_periods_id_fk",
+          "tableFrom": "family_deadline_extensions",
+          "tableTo": "submission_periods",
+          "columnsFrom": [
+            "submission_period_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_deadline_extensions_administrator_id_administrators_id_fk": {
+          "name": "family_deadline_extensions_administrator_id_administrators_id_fk",
+          "tableFrom": "family_deadline_extensions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_family_deadline_extensions_reason": {
+          "name": "chk_family_deadline_extensions_reason",
+          "value": "length(trim(\"family_deadline_extensions\".\"reason\")) > 0"
+        }
+      }
+    },
+    "family_submission_version_children": {
+      "name": "family_submission_version_children",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version_id": {
+          "name": "version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "child_id": {
+          "name": "child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "child_code_snapshot": {
+          "name": "child_code_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name_snapshot": {
+          "name": "name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kana_snapshot": {
+          "name": "kana_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "last_name_snapshot": {
+          "name": "last_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "first_name_snapshot": {
+          "name": "first_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_name_kana_snapshot": {
+          "name": "last_name_kana_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "first_name_kana_snapshot": {
+          "name": "first_name_kana_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "class_name_snapshot": {
+          "name": "class_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "birth_date_snapshot": {
+          "name": "birth_date_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "enrollment_date_snapshot": {
+          "name": "enrollment_date_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "withdrawal_date_snapshot": {
+          "name": "withdrawal_date_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_family_submission_version_children": {
+          "name": "uq_family_submission_version_children",
+          "columns": [
+            "version_id",
+            "child_id"
+          ],
+          "isUnique": true
+        },
+        "idx_family_submission_version_children_child": {
+          "name": "idx_family_submission_version_children_child",
+          "columns": [
+            "child_id",
+            "version_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "family_submission_version_children_version_id_family_submission_versions_id_fk": {
+          "name": "family_submission_version_children_version_id_family_submission_versions_id_fk",
+          "tableFrom": "family_submission_version_children",
+          "tableTo": "family_submission_versions",
+          "columnsFrom": [
+            "version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "family_submission_version_children_child_id_children_id_fk": {
+          "name": "family_submission_version_children_child_id_children_id_fk",
+          "tableFrom": "family_submission_version_children",
+          "tableTo": "children",
+          "columnsFrom": [
+            "child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "family_submission_version_days": {
+      "name": "family_submission_version_days",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version_child_id": {
+          "name": "version_child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "usage_status": {
+          "name": "usage_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "arrival_time": {
+          "name": "arrival_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "departure_time": {
+          "name": "departure_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changed": {
+          "name": "changed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_family_submission_version_days_date": {
+          "name": "uq_family_submission_version_days_date",
+          "columns": [
+            "version_child_id",
+            "date"
+          ],
+          "isUnique": true
+        },
+        "idx_family_submission_version_days_date": {
+          "name": "idx_family_submission_version_days_date",
+          "columns": [
+            "date",
+            "usage_status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "family_submission_version_days_version_child_id_family_submission_version_children_id_fk": {
+          "name": "family_submission_version_days_version_child_id_family_submission_version_children_id_fk",
+          "tableFrom": "family_submission_version_days",
+          "tableTo": "family_submission_version_children",
+          "columnsFrom": [
+            "version_child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_family_submission_version_days_usage_status": {
+          "name": "chk_family_submission_version_days_usage_status",
+          "value": "\"family_submission_version_days\".\"usage_status\" in ('using', 'off', 'closed', 'not_enrolled')"
+        },
+        "chk_family_submission_version_days_source": {
+          "name": "chk_family_submission_version_days_source",
+          "value": "\"family_submission_version_days\".\"source\" in ('base', 'weekday', 'daily', 'parent', 'admin')"
+        }
+      }
+    },
+    "family_submission_versions": {
+      "name": "family_submission_versions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_submission_id": {
+          "name": "family_submission_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submission_period_id": {
+          "name": "submission_period_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sequence_number": {
+          "name": "sequence_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version_type": {
+          "name": "version_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'parent_submission'"
+        },
+        "review_status": {
+          "name": "review_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "source_version_id": {
+          "name": "source_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by_family_account_id": {
+          "name": "created_by_family_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by_administrator_id": {
+          "name": "created_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reason_text": {
+          "name": "reason_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "change_summary_json": {
+          "name": "change_summary_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confirmed_by_administrator_id": {
+          "name": "confirmed_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_family_submission_versions_sequence": {
+          "name": "uq_family_submission_versions_sequence",
+          "columns": [
+            "family_submission_id",
+            "sequence_number"
+          ],
+          "isUnique": true
+        },
+        "idx_family_submission_versions_period_status": {
+          "name": "idx_family_submission_versions_period_status",
+          "columns": [
+            "submission_period_id",
+            "review_status",
+            "submitted_at"
+          ],
+          "isUnique": false
+        },
+        "idx_family_submission_versions_family": {
+          "name": "idx_family_submission_versions_family",
+          "columns": [
+            "family_id",
+            "submitted_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "family_submission_versions_family_submission_id_family_submissions_id_fk": {
+          "name": "family_submission_versions_family_submission_id_family_submissions_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "family_submissions",
+          "columnsFrom": [
+            "family_submission_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submission_versions_family_id_families_id_fk": {
+          "name": "family_submission_versions_family_id_families_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "families",
+          "columnsFrom": [
+            "family_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submission_versions_submission_period_id_submission_periods_id_fk": {
+          "name": "family_submission_versions_submission_period_id_submission_periods_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "submission_periods",
+          "columnsFrom": [
+            "submission_period_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submission_versions_source_version_id_family_submission_versions_id_fk": {
+          "name": "family_submission_versions_source_version_id_family_submission_versions_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "family_submission_versions",
+          "columnsFrom": [
+            "source_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submission_versions_created_by_family_account_id_family_accounts_id_fk": {
+          "name": "family_submission_versions_created_by_family_account_id_family_accounts_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "family_accounts",
+          "columnsFrom": [
+            "created_by_family_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "family_submission_versions_created_by_administrator_id_administrators_id_fk": {
+          "name": "family_submission_versions_created_by_administrator_id_administrators_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "created_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "family_submission_versions_confirmed_by_administrator_id_administrators_id_fk": {
+          "name": "family_submission_versions_confirmed_by_administrator_id_administrators_id_fk",
+          "tableFrom": "family_submission_versions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "confirmed_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_family_submission_versions_sequence": {
+          "name": "chk_family_submission_versions_sequence",
+          "value": "\"family_submission_versions\".\"sequence_number\" > 0"
+        },
+        "chk_family_submission_versions_type": {
+          "name": "chk_family_submission_versions_type",
+          "value": "\"family_submission_versions\".\"version_type\" in ('parent_submission', 'administrator_revision')"
+        },
+        "chk_family_submission_versions_review_status": {
+          "name": "chk_family_submission_versions_review_status",
+          "value": "\"family_submission_versions\".\"review_status\" in ('pending', 'confirmed')"
+        }
+      }
+    },
+    "family_submissions": {
+      "name": "family_submissions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submission_period_id": {
+          "name": "submission_period_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'draft'"
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "latest_submitted_version_id": {
+          "name": "latest_submitted_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "latest_confirmed_version_id": {
+          "name": "latest_confirmed_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "latest_effective_version_id": {
+          "name": "latest_effective_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resubmission_allowed_for_version_id": {
+          "name": "resubmission_allowed_for_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_updated_at": {
+          "name": "last_updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_family_submissions_family_period": {
+          "name": "uq_family_submissions_family_period",
+          "columns": [
+            "family_id",
+            "submission_period_id"
+          ],
+          "isUnique": true
+        },
+        "idx_family_submissions_period_status": {
+          "name": "idx_family_submissions_period_status",
+          "columns": [
+            "submission_period_id",
+            "status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "family_submissions_family_id_families_id_fk": {
+          "name": "family_submissions_family_id_families_id_fk",
+          "tableFrom": "family_submissions",
+          "tableTo": "families",
+          "columnsFrom": [
+            "family_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submissions_submission_period_id_submission_periods_id_fk": {
+          "name": "family_submissions_submission_period_id_submission_periods_id_fk",
+          "tableFrom": "family_submissions",
+          "tableTo": "submission_periods",
+          "columnsFrom": [
+            "submission_period_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submissions_latest_submitted_version_id_family_submission_versions_id_fk": {
+          "name": "family_submissions_latest_submitted_version_id_family_submission_versions_id_fk",
+          "tableFrom": "family_submissions",
+          "tableTo": "family_submission_versions",
+          "columnsFrom": [
+            "latest_submitted_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submissions_latest_confirmed_version_id_family_submission_versions_id_fk": {
+          "name": "family_submissions_latest_confirmed_version_id_family_submission_versions_id_fk",
+          "tableFrom": "family_submissions",
+          "tableTo": "family_submission_versions",
+          "columnsFrom": [
+            "latest_confirmed_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submissions_latest_effective_version_id_family_submission_versions_id_fk": {
+          "name": "family_submissions_latest_effective_version_id_family_submission_versions_id_fk",
+          "tableFrom": "family_submissions",
+          "tableTo": "family_submission_versions",
+          "columnsFrom": [
+            "latest_effective_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "family_submissions_resubmission_allowed_for_version_id_family_submission_versions_id_fk": {
+          "name": "family_submissions_resubmission_allowed_for_version_id_family_submission_versions_id_fk",
+          "tableFrom": "family_submissions",
+          "tableTo": "family_submission_versions",
+          "columnsFrom": [
+            "resubmission_allowed_for_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_family_submissions_status": {
+          "name": "chk_family_submissions_status",
+          "value": "\"family_submissions\".\"status\" in ('draft', 'submitted', 'overdue')"
+        }
+      }
+    },
+    "monthly_schedules": {
+      "name": "monthly_schedules",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "child_id": {
+          "name": "child_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submission_period_id": {
+          "name": "submission_period_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "family_submission_id": {
+          "name": "family_submission_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'draft'"
+        },
+        "base_pattern_snapshot_json": {
+          "name": "base_pattern_snapshot_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_monthly_schedules_child_period": {
+          "name": "uq_monthly_schedules_child_period",
+          "columns": [
+            "child_id",
+            "submission_period_id"
+          ],
+          "isUnique": true
+        },
+        "idx_monthly_schedules_period_status": {
+          "name": "idx_monthly_schedules_period_status",
+          "columns": [
+            "submission_period_id",
+            "status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "monthly_schedules_child_id_children_id_fk": {
+          "name": "monthly_schedules_child_id_children_id_fk",
+          "tableFrom": "monthly_schedules",
+          "tableTo": "children",
+          "columnsFrom": [
+            "child_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "monthly_schedules_submission_period_id_submission_periods_id_fk": {
+          "name": "monthly_schedules_submission_period_id_submission_periods_id_fk",
+          "tableFrom": "monthly_schedules",
+          "tableTo": "submission_periods",
+          "columnsFrom": [
+            "submission_period_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "monthly_schedules_family_submission_id_family_submissions_id_fk": {
+          "name": "monthly_schedules_family_submission_id_family_submissions_id_fk",
+          "tableFrom": "monthly_schedules",
+          "tableTo": "family_submissions",
+          "columnsFrom": [
+            "family_submission_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_monthly_schedules_status": {
+          "name": "chk_monthly_schedules_status",
+          "value": "\"monthly_schedules\".\"status\" in ('draft', 'submitted', 'admin_pending', 'confirmed')"
+        }
+      }
+    },
+    "operation_logs": {
+      "name": "operation_logs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_type": {
+          "name": "actor_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_type": {
+          "name": "target_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "target_month": {
+          "name": "target_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "detail_json": {
+          "name": "detail_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_operation_logs_occurred_at": {
+          "name": "idx_operation_logs_occurred_at",
+          "columns": [
+            "occurred_at"
+          ],
+          "isUnique": false
+        },
+        "idx_operation_logs_actor": {
+          "name": "idx_operation_logs_actor",
+          "columns": [
+            "actor_type",
+            "actor_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "staff_members": {
+      "name": "staff_members",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "staff_code": {
+          "name": "staff_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "employment_start_date": {
+          "name": "employment_start_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "employment_end_date": {
+          "name": "employment_end_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_members_staff_code": {
+          "name": "uq_staff_members_staff_code",
+          "columns": [
+            "staff_code"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_members_status_dates": {
+          "name": "idx_staff_members_status_dates",
+          "columns": [
+            "status",
+            "employment_start_date",
+            "employment_end_date"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_members_code": {
+          "name": "chk_staff_members_code",
+          "value": "length(trim(\"staff_members\".\"staff_code\")) > 0"
+        },
+        "chk_staff_members_name": {
+          "name": "chk_staff_members_name",
+          "value": "length(trim(\"staff_members\".\"name\")) > 0"
+        },
+        "chk_staff_members_status": {
+          "name": "chk_staff_members_status",
+          "value": "\"staff_members\".\"status\" in ('active', 'inactive')"
+        },
+        "chk_staff_members_employment_dates": {
+          "name": "chk_staff_members_employment_dates",
+          "value": "\"staff_members\".\"employment_end_date\" is null or \"staff_members\".\"employment_end_date\" >= \"staff_members\".\"employment_start_date\""
+        }
+      }
+    },
+    "staff_qualifications": {
+      "name": "staff_qualifications",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "qualification_type": {
+          "name": "qualification_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "valid_from": {
+          "name": "valid_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "valid_to": {
+          "name": "valid_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_qualifications_staff_type_from": {
+          "name": "uq_staff_qualifications_staff_type_from",
+          "columns": [
+            "staff_id",
+            "qualification_type",
+            "valid_from"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_qualifications_staff_dates": {
+          "name": "idx_staff_qualifications_staff_dates",
+          "columns": [
+            "staff_id",
+            "valid_from",
+            "valid_to"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_qualifications_staff_id_staff_members_id_fk": {
+          "name": "staff_qualifications_staff_id_staff_members_id_fk",
+          "tableFrom": "staff_qualifications",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_qualifications_type": {
+          "name": "chk_staff_qualifications_type",
+          "value": "length(trim(\"staff_qualifications\".\"qualification_type\")) > 0"
+        },
+        "chk_staff_qualifications_dates": {
+          "name": "chk_staff_qualifications_dates",
+          "value": "\"staff_qualifications\".\"valid_to\" is null or \"staff_qualifications\".\"valid_to\" >= \"staff_qualifications\".\"valid_from\""
+        }
+      }
+    },
+    "staff_roles": {
+      "name": "staff_roles",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role_type": {
+          "name": "role_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "valid_from": {
+          "name": "valid_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "valid_to": {
+          "name": "valid_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_roles_staff_type_from": {
+          "name": "uq_staff_roles_staff_type_from",
+          "columns": [
+            "staff_id",
+            "role_type",
+            "valid_from"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_roles_staff_dates": {
+          "name": "idx_staff_roles_staff_dates",
+          "columns": [
+            "staff_id",
+            "valid_from",
+            "valid_to"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_roles_staff_id_staff_members_id_fk": {
+          "name": "staff_roles_staff_id_staff_members_id_fk",
+          "tableFrom": "staff_roles",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_roles_type": {
+          "name": "chk_staff_roles_type",
+          "value": "\"staff_roles\".\"role_type\" in ('nursery_teacher_role', 'principal', 'manager', 'meal_service', 'other')"
+        },
+        "chk_staff_roles_dates": {
+          "name": "chk_staff_roles_dates",
+          "value": "\"staff_roles\".\"valid_to\" is null or \"staff_roles\".\"valid_to\" >= \"staff_roles\".\"valid_from\""
+        }
+      }
+    },
+    "staff_schedule_days": {
+      "name": "staff_schedule_days",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version_id": {
+          "name": "version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "date": {
+          "name": "date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "day_type": {
+          "name": "day_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_schedule_days_version_staff_date": {
+          "name": "uq_staff_schedule_days_version_staff_date",
+          "columns": [
+            "version_id",
+            "staff_id",
+            "date"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_schedule_days_version_date": {
+          "name": "idx_staff_schedule_days_version_date",
+          "columns": [
+            "version_id",
+            "date"
+          ],
+          "isUnique": false
+        },
+        "idx_staff_schedule_days_staff_date": {
+          "name": "idx_staff_schedule_days_staff_date",
+          "columns": [
+            "staff_id",
+            "date"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_schedule_days_version_id_staff_schedule_versions_id_fk": {
+          "name": "staff_schedule_days_version_id_staff_schedule_versions_id_fk",
+          "tableFrom": "staff_schedule_days",
+          "tableTo": "staff_schedule_versions",
+          "columnsFrom": [
+            "version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "staff_schedule_days_staff_id_staff_members_id_fk": {
+          "name": "staff_schedule_days_staff_id_staff_members_id_fk",
+          "tableFrom": "staff_schedule_days",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_schedule_days_date": {
+          "name": "chk_staff_schedule_days_date",
+          "value": "\"staff_schedule_days\".\"date\" glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+        },
+        "chk_staff_schedule_days_type": {
+          "name": "chk_staff_schedule_days_type",
+          "value": "\"staff_schedule_days\".\"day_type\" in ('work', 'day_off', 'paid_leave', 'other')"
+        }
+      }
+    },
+    "staff_schedule_months": {
+      "name": "staff_schedule_months",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_month": {
+          "name": "target_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'draft'"
+        },
+        "current_version_id": {
+          "name": "current_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_schedule_months_target_month": {
+          "name": "uq_staff_schedule_months_target_month",
+          "columns": [
+            "target_month"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_schedule_months_status": {
+          "name": "idx_staff_schedule_months_status",
+          "columns": [
+            "status",
+            "target_month"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_schedule_months_current_version_id_staff_schedule_versions_id_fk": {
+          "name": "staff_schedule_months_current_version_id_staff_schedule_versions_id_fk",
+          "tableFrom": "staff_schedule_months",
+          "tableTo": "staff_schedule_versions",
+          "columnsFrom": [
+            "current_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_schedule_months_target_month": {
+          "name": "chk_staff_schedule_months_target_month",
+          "value": "\"staff_schedule_months\".\"target_month\" glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]' and substr(\"staff_schedule_months\".\"target_month\", 6, 2) between '01' and '12'"
+        },
+        "chk_staff_schedule_months_status": {
+          "name": "chk_staff_schedule_months_status",
+          "value": "\"staff_schedule_months\".\"status\" in ('draft', 'confirmed')"
+        },
+        "chk_staff_schedule_months_confirmation": {
+          "name": "chk_staff_schedule_months_confirmation",
+          "value": "(\"staff_schedule_months\".\"status\" = 'draft' and \"staff_schedule_months\".\"confirmed_at\" is null) or (\"staff_schedule_months\".\"status\" = 'confirmed' and \"staff_schedule_months\".\"confirmed_at\" is not null)"
+        }
+      }
+    },
+    "staff_schedule_segments": {
+      "name": "staff_schedule_segments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "schedule_day_id": {
+          "name": "schedule_day_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "activity_type": {
+          "name": "activity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_schedule_segments_day_start": {
+          "name": "uq_staff_schedule_segments_day_start",
+          "columns": [
+            "schedule_day_id",
+            "start_time"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_schedule_segments_day_times": {
+          "name": "idx_staff_schedule_segments_day_times",
+          "columns": [
+            "schedule_day_id",
+            "start_time",
+            "end_time"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_schedule_segments_schedule_day_id_staff_schedule_days_id_fk": {
+          "name": "staff_schedule_segments_schedule_day_id_staff_schedule_days_id_fk",
+          "tableFrom": "staff_schedule_segments",
+          "tableTo": "staff_schedule_days",
+          "columnsFrom": [
+            "schedule_day_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_schedule_segments_times": {
+          "name": "chk_staff_schedule_segments_times",
+          "value": "\"staff_schedule_segments\".\"start_time\" glob '[0-2][0-9]:[0-5][0-9]'\n          and \"staff_schedule_segments\".\"end_time\" glob '[0-2][0-9]:[0-5][0-9]'\n          and substr(\"staff_schedule_segments\".\"start_time\", 4, 2) in ('00', '15', '30', '45')\n          and substr(\"staff_schedule_segments\".\"end_time\", 4, 2) in ('00', '15', '30', '45')\n          and \"staff_schedule_segments\".\"start_time\" >= '06:30'\n          and \"staff_schedule_segments\".\"end_time\" <= '20:30'\n          and \"staff_schedule_segments\".\"start_time\" < \"staff_schedule_segments\".\"end_time\""
+        },
+        "chk_staff_schedule_segments_activity": {
+          "name": "chk_staff_schedule_segments_activity",
+          "value": "\"staff_schedule_segments\".\"activity_type\" in ('childcare', 'break', 'administration', 'training', 'meal_service', 'other_work')"
+        }
+      }
+    },
+    "staff_schedule_versions": {
+      "name": "staff_schedule_versions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "schedule_month_id": {
+          "name": "schedule_month_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version_number": {
+          "name": "version_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'manual'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'draft'"
+        },
+        "source_version_id": {
+          "name": "source_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by_administrator_id": {
+          "name": "created_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confirmed_by_administrator_id": {
+          "name": "confirmed_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_schedule_versions_month_number": {
+          "name": "uq_staff_schedule_versions_month_number",
+          "columns": [
+            "schedule_month_id",
+            "version_number"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_schedule_versions_month_status": {
+          "name": "idx_staff_schedule_versions_month_status",
+          "columns": [
+            "schedule_month_id",
+            "status",
+            "version_number"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_schedule_versions_schedule_month_id_staff_schedule_months_id_fk": {
+          "name": "staff_schedule_versions_schedule_month_id_staff_schedule_months_id_fk",
+          "tableFrom": "staff_schedule_versions",
+          "tableTo": "staff_schedule_months",
+          "columnsFrom": [
+            "schedule_month_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "staff_schedule_versions_source_version_id_staff_schedule_versions_id_fk": {
+          "name": "staff_schedule_versions_source_version_id_staff_schedule_versions_id_fk",
+          "tableFrom": "staff_schedule_versions",
+          "tableTo": "staff_schedule_versions",
+          "columnsFrom": [
+            "source_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "staff_schedule_versions_created_by_administrator_id_administrators_id_fk": {
+          "name": "staff_schedule_versions_created_by_administrator_id_administrators_id_fk",
+          "tableFrom": "staff_schedule_versions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "created_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "staff_schedule_versions_confirmed_by_administrator_id_administrators_id_fk": {
+          "name": "staff_schedule_versions_confirmed_by_administrator_id_administrators_id_fk",
+          "tableFrom": "staff_schedule_versions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "confirmed_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_schedule_versions_number": {
+          "name": "chk_staff_schedule_versions_number",
+          "value": "\"staff_schedule_versions\".\"version_number\" > 0"
+        },
+        "chk_staff_schedule_versions_source": {
+          "name": "chk_staff_schedule_versions_source",
+          "value": "\"staff_schedule_versions\".\"source\" in ('manual', 'auto_generated')"
+        },
+        "chk_staff_schedule_versions_status": {
+          "name": "chk_staff_schedule_versions_status",
+          "value": "\"staff_schedule_versions\".\"status\" in ('draft', 'confirmed')"
+        },
+        "chk_staff_schedule_versions_confirmation": {
+          "name": "chk_staff_schedule_versions_confirmation",
+          "value": "(\"staff_schedule_versions\".\"status\" = 'draft' and \"staff_schedule_versions\".\"confirmed_at\" is null) or (\"staff_schedule_versions\".\"status\" = 'confirmed' and \"staff_schedule_versions\".\"confirmed_at\" is not null)"
+        }
+      }
+    },
+    "staff_weekly_availability": {
+      "name": "staff_weekly_availability",
+      "columns": {
+        "work_condition_version_id": {
+          "name": "work_condition_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "weekday": {
+          "name": "weekday",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "available": {
+          "name": "available",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "staff_weekly_availability_work_condition_version_id_staff_work_condition_versions_id_fk": {
+          "name": "staff_weekly_availability_work_condition_version_id_staff_work_condition_versions_id_fk",
+          "tableFrom": "staff_weekly_availability",
+          "tableTo": "staff_work_condition_versions",
+          "columnsFrom": [
+            "work_condition_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "staff_weekly_availability_work_condition_version_id_weekday_pk": {
+          "columns": [
+            "work_condition_version_id",
+            "weekday"
+          ],
+          "name": "staff_weekly_availability_work_condition_version_id_weekday_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_weekly_availability_weekday": {
+          "name": "chk_staff_weekly_availability_weekday",
+          "value": "\"staff_weekly_availability\".\"weekday\" between 0 and 6"
+        },
+        "chk_staff_weekly_availability_times": {
+          "name": "chk_staff_weekly_availability_times",
+          "value": "(\"staff_weekly_availability\".\"available\" = 0 and \"staff_weekly_availability\".\"start_time\" is null and \"staff_weekly_availability\".\"end_time\" is null)\n          or (\"staff_weekly_availability\".\"available\" = 1 and \"staff_weekly_availability\".\"start_time\" is not null and \"staff_weekly_availability\".\"end_time\" is not null and \"staff_weekly_availability\".\"start_time\" < \"staff_weekly_availability\".\"end_time\")"
+        }
+      }
+    },
+    "staff_work_condition_versions": {
+      "name": "staff_work_condition_versions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "valid_from": {
+          "name": "valid_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "valid_to": {
+          "name": "valid_to",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "employment_type": {
+          "name": "employment_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "monthly_minutes_limit": {
+          "name": "monthly_minutes_limit",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "max_consecutive_days": {
+          "name": "max_consecutive_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by_administrator_id": {
+          "name": "created_by_administrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_staff_work_conditions_staff_from": {
+          "name": "uq_staff_work_conditions_staff_from",
+          "columns": [
+            "staff_id",
+            "valid_from"
+          ],
+          "isUnique": true
+        },
+        "idx_staff_work_conditions_staff_dates": {
+          "name": "idx_staff_work_conditions_staff_dates",
+          "columns": [
+            "staff_id",
+            "valid_from",
+            "valid_to"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "staff_work_condition_versions_staff_id_staff_members_id_fk": {
+          "name": "staff_work_condition_versions_staff_id_staff_members_id_fk",
+          "tableFrom": "staff_work_condition_versions",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "staff_work_condition_versions_created_by_administrator_id_administrators_id_fk": {
+          "name": "staff_work_condition_versions_created_by_administrator_id_administrators_id_fk",
+          "tableFrom": "staff_work_condition_versions",
+          "tableTo": "administrators",
+          "columnsFrom": [
+            "created_by_administrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_staff_work_conditions_employment_type": {
+          "name": "chk_staff_work_conditions_employment_type",
+          "value": "length(trim(\"staff_work_condition_versions\".\"employment_type\")) > 0"
+        },
+        "chk_staff_work_conditions_dates": {
+          "name": "chk_staff_work_conditions_dates",
+          "value": "\"staff_work_condition_versions\".\"valid_to\" is null or \"staff_work_condition_versions\".\"valid_to\" >= \"staff_work_condition_versions\".\"valid_from\""
+        },
+        "chk_staff_work_conditions_monthly_limit": {
+          "name": "chk_staff_work_conditions_monthly_limit",
+          "value": "\"staff_work_condition_versions\".\"monthly_minutes_limit\" is null or \"staff_work_condition_versions\".\"monthly_minutes_limit\" > 0"
+        },
+        "chk_staff_work_conditions_consecutive_days": {
+          "name": "chk_staff_work_conditions_consecutive_days",
+          "value": "\"staff_work_condition_versions\".\"max_consecutive_days\" is null or \"staff_work_condition_versions\".\"max_consecutive_days\" > 0"
+        }
+      }
+    },
+    "standard_reason_histories": {
+      "name": "standard_reason_histories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "standard_reason_id": {
+          "name": "standard_reason_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "before_json": {
+          "name": "before_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "after_json": {
+          "name": "after_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "changed_at": {
+          "name": "changed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_standard_reason_histories_reason": {
+          "name": "idx_standard_reason_histories_reason",
+          "columns": [
+            "standard_reason_id"
+          ],
+          "isUnique": false
+        },
+        "idx_standard_reason_histories_changed_at": {
+          "name": "idx_standard_reason_histories_changed_at",
+          "columns": [
+            "changed_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "standard_reason_histories_standard_reason_id_standard_reasons_id_fk": {
+          "name": "standard_reason_histories_standard_reason_id_standard_reasons_id_fk",
+          "tableFrom": "standard_reason_histories",
+          "tableTo": "standard_reasons",
+          "columnsFrom": [
+            "standard_reason_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "standard_reasons": {
+      "name": "standard_reasons",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "hidden_from_order": {
+          "name": "hidden_from_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_standard_reasons_active_order": {
+          "name": "idx_standard_reasons_active_order",
+          "columns": [
+            "active",
+            "sort_order"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "submission_periods": {
+      "name": "submission_periods",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_month": {
+          "name": "target_month",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "deadline_at": {
+          "name": "deadline_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'open'"
+        },
+        "is_parent_target": {
+          "name": "is_parent_target",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "uq_submission_periods_target_month": {
+          "name": "uq_submission_periods_target_month",
+          "columns": [
+            "target_month"
+          ],
+          "isUnique": true
+        },
+        "uq_submission_periods_single_parent_target": {
+          "name": "uq_submission_periods_single_parent_target",
+          "columns": [
+            "is_parent_target"
+          ],
+          "isUnique": true,
+          "where": "\"submission_periods\".\"is_parent_target\" = 1"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "chk_submission_periods_status": {
+          "name": "chk_submission_periods_status",
+          "value": "\"submission_periods\".\"status\" in ('draft', 'open', 'closed')"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

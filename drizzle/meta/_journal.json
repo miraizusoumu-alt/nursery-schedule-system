@@ -57,6 +57,13 @@
       "when": 1787633956111,
       "tag": "0007_reflective_zombie",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787641573125,
+      "tag": "0008_majestic_black_crow",
+      "breakpoints": true
     }
   ]
 }

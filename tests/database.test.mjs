@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -27,6 +27,18 @@ async function withTemporaryDirectory(run) {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+async function copyMigrationsThrough(directory, lastMigrationName) {
+  const migrationsPath = resolve(directory, "migrations");
+  await mkdir(migrationsPath);
+  const migrationNames = (await readdir(resolve(PROJECT_ROOT, "drizzle")))
+    .filter((name) => name.endsWith(".sql") && name.localeCompare(lastMigrationName) <= 0)
+    .sort((a, b) => a.localeCompare(b));
+  for (const name of migrationNames) {
+    await cp(resolve(PROJECT_ROOT, "drizzle", name), resolve(migrationsPath, name));
+  }
+  return migrationsPath;
 }
 
 test("applies the SQLite migration and creates every required table", async () => {
@@ -124,6 +136,83 @@ test("backs up and restores an explicitly selected SQLite file with a pre-restor
     assert.equal(preRestoreDatabase.prepare("SELECT display_name FROM families WHERE id = ?").get("demo-family-001").display_name, "復元前の変更");
     preRestoreDatabase.close();
     assert.ok((await readFile(manualBackup)).length > 0);
+  });
+});
+
+test("validates and backs up a complete database through migration 0007", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const migrationsPath = await copyMigrationsThrough(directory, "0007_reflective_zombie.sql");
+    const databasePath = resolve(directory, "through-0007.sqlite");
+    const database = openDatabase(databasePath);
+    try {
+      await applyMigrations(database, migrationsPath);
+      const report = inspectDatabase(database);
+      assert.equal(report.migrationsOk, true);
+      assert.deepEqual(report.missingTables, []);
+      assert.equal(report.requiredTables.includes("staff_schedule_months"), false);
+    } finally {
+      database.close();
+    }
+
+    const backupPath = await backupDatabase({
+      databasePath,
+      backupDirectory: resolve(directory, "backups"),
+      now: new Date(2099, 1, 3, 4, 5, 6, 7),
+    });
+    await access(backupPath);
+  });
+});
+
+test("requires the 0008 schedule tables when migration 0008 is recorded", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const databasePath = resolve(directory, "through-0008.sqlite");
+    const database = openDatabase(databasePath);
+    try {
+      await applyMigrations(database);
+      assert.equal(inspectDatabase(database).migrationsOk, true);
+      assert.deepEqual(inspectDatabase(database).missingTables, []);
+
+      database.exec("DROP TABLE staff_schedule_segments");
+      const damaged = inspectDatabase(database);
+      assert.equal(damaged.migrationsOk, true);
+      assert.deepEqual(damaged.missingTables, ["staff_schedule_segments"]);
+    } finally {
+      database.close();
+    }
+    await assert.rejects(
+      backupDatabase({ databasePath, backupDirectory: resolve(directory, "backups") }),
+      /staff_schedule_segments/,
+    );
+  });
+});
+
+test("rejects a missing pre-0008 table and a changed migration hash", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const migrationsPath = await copyMigrationsThrough(directory, "0007_reflective_zombie.sql");
+    const missingTablePath = resolve(directory, "missing-table.sqlite");
+    let database = openDatabase(missingTablePath);
+    await applyMigrations(database, migrationsPath);
+    database.exec("DROP TABLE staff_roles");
+    assert.deepEqual(inspectDatabase(database).missingTables, ["staff_roles"]);
+    database.close();
+    await assert.rejects(
+      backupDatabase({ databasePath: missingTablePath, backupDirectory: resolve(directory, "backups-a") }),
+      /staff_roles/,
+    );
+
+    const changedHashPath = resolve(directory, "changed-hash.sqlite");
+    database = openDatabase(changedHashPath);
+    await applyMigrations(database, migrationsPath);
+    database.prepare("UPDATE _schema_migrations SET checksum = ? WHERE name = ?")
+      .run("invalid-checksum", "0007_reflective_zombie.sql");
+    const changedHash = inspectDatabase(database);
+    assert.equal(changedHash.migrationsOk, false);
+    assert.match(changedHash.migrationErrors.join(" "), /hash/);
+    database.close();
+    await assert.rejects(
+      backupDatabase({ databasePath: changedHashPath, backupDirectory: resolve(directory, "backups-b") }),
+      /hash/,
+    );
   });
 });
 

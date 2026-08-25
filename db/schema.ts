@@ -221,6 +221,107 @@ export const staffWeeklyAvailability = sqliteTable(
   ],
 );
 
+export const staffScheduleMonths = sqliteTable(
+  "staff_schedule_months",
+  {
+    id: text("id").primaryKey(),
+    targetMonth: text("target_month").notNull(),
+    status: text("status").notNull().default("draft"),
+    currentVersionId: text("current_version_id").references((): AnySQLiteColumn => staffScheduleVersions.id, { onDelete: "restrict" }),
+    confirmedAt: text("confirmed_at"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_schedule_months_target_month").on(table.targetMonth),
+    index("idx_staff_schedule_months_status").on(table.status, table.targetMonth),
+    check(
+      "chk_staff_schedule_months_target_month",
+      sql`${table.targetMonth} glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]' and substr(${table.targetMonth}, 6, 2) between '01' and '12'`,
+    ),
+    check("chk_staff_schedule_months_status", sql`${table.status} in ('draft', 'confirmed')`),
+    check(
+      "chk_staff_schedule_months_confirmation",
+      sql`(${table.status} = 'draft' and ${table.confirmedAt} is null) or (${table.status} = 'confirmed' and ${table.confirmedAt} is not null)`,
+    ),
+  ],
+);
+
+export const staffScheduleVersions = sqliteTable(
+  "staff_schedule_versions",
+  {
+    id: text("id").primaryKey(),
+    scheduleMonthId: text("schedule_month_id").notNull().references((): AnySQLiteColumn => staffScheduleMonths.id, { onDelete: "restrict" }),
+    versionNumber: integer("version_number").notNull(),
+    source: text("source").notNull().default("manual"),
+    status: text("status").notNull().default("draft"),
+    sourceVersionId: text("source_version_id").references((): AnySQLiteColumn => staffScheduleVersions.id, { onDelete: "restrict" }),
+    createdByAdministratorId: text("created_by_administrator_id").references(() => administrators.id, { onDelete: "restrict" }),
+    confirmedByAdministratorId: text("confirmed_by_administrator_id").references(() => administrators.id, { onDelete: "restrict" }),
+    confirmedAt: text("confirmed_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("uq_staff_schedule_versions_month_number").on(table.scheduleMonthId, table.versionNumber),
+    index("idx_staff_schedule_versions_month_status").on(table.scheduleMonthId, table.status, table.versionNumber),
+    check("chk_staff_schedule_versions_number", sql`${table.versionNumber} > 0`),
+    check("chk_staff_schedule_versions_source", sql`${table.source} in ('manual', 'auto_generated')`),
+    check("chk_staff_schedule_versions_status", sql`${table.status} in ('draft', 'confirmed')`),
+    check(
+      "chk_staff_schedule_versions_confirmation",
+      sql`(${table.status} = 'draft' and ${table.confirmedAt} is null) or (${table.status} = 'confirmed' and ${table.confirmedAt} is not null)`,
+    ),
+  ],
+);
+
+export const staffScheduleDays = sqliteTable(
+  "staff_schedule_days",
+  {
+    id: text("id").primaryKey(),
+    versionId: text("version_id").notNull().references(() => staffScheduleVersions.id, { onDelete: "restrict" }),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    date: text("date").notNull(),
+    dayType: text("day_type").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_schedule_days_version_staff_date").on(table.versionId, table.staffId, table.date),
+    index("idx_staff_schedule_days_version_date").on(table.versionId, table.date),
+    index("idx_staff_schedule_days_staff_date").on(table.staffId, table.date),
+    check("chk_staff_schedule_days_date", sql`${table.date} glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+    check("chk_staff_schedule_days_type", sql`${table.dayType} in ('work', 'day_off', 'paid_leave', 'other')`),
+  ],
+);
+
+export const staffScheduleSegments = sqliteTable(
+  "staff_schedule_segments",
+  {
+    id: text("id").primaryKey(),
+    scheduleDayId: text("schedule_day_id").notNull().references(() => staffScheduleDays.id, { onDelete: "restrict" }),
+    startTime: text("start_time").notNull(),
+    endTime: text("end_time").notNull(),
+    activityType: text("activity_type").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_schedule_segments_day_start").on(table.scheduleDayId, table.startTime),
+    index("idx_staff_schedule_segments_day_times").on(table.scheduleDayId, table.startTime, table.endTime),
+    check(
+      "chk_staff_schedule_segments_times",
+      sql`${table.startTime} glob '[0-2][0-9]:[0-5][0-9]'
+          and ${table.endTime} glob '[0-2][0-9]:[0-5][0-9]'
+          and substr(${table.startTime}, 4, 2) in ('00', '15', '30', '45')
+          and substr(${table.endTime}, 4, 2) in ('00', '15', '30', '45')
+          and ${table.startTime} >= '06:30'
+          and ${table.endTime} <= '20:30'
+          and ${table.startTime} < ${table.endTime}`,
+    ),
+    check(
+      "chk_staff_schedule_segments_activity",
+      sql`${table.activityType} in ('childcare', 'break', 'administration', 'training', 'meal_service', 'other_work')`,
+    ),
+  ],
+);
+
 export const basicUsagePatterns = sqliteTable(
   "basic_usage_patterns",
   {
