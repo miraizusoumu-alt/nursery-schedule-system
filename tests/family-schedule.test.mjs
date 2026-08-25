@@ -2479,6 +2479,33 @@ test("aggregates the effective monthly schedule with fiscal-age groups and priva
     assert.equal(quarterAt("2026-09-01", "16:00").licensedNurseryTeacherShortage, 1);
     assert.equal(quarterHourCandidates.classificationLimitations.length, 0);
 
+    database.prepare(
+      `INSERT INTO staff_schedule_preferences
+       (id, staff_id, date, preference_type, start_time, end_time,
+        created_by_administrator_id, updated_by_administrator_id)
+       VALUES ('preference-staff-a', 'staff-a', '2026-09-01', 'day_off', NULL, NULL, ?, ?)`,
+    ).run(fixture.actorAdmin.id, fixture.actorAdmin.id);
+    const dayOffCandidates = service.administratorQuarterHourStaffingCandidates(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.deepEqual(dayOffCandidates.slots
+      .find((slot) => slot.date === "2026-09-01" && slot.startTime === "15:45")
+      .eligibleStaff.map((entry) => entry.staffId), ["staff-b"]);
+
+    database.prepare(
+      `UPDATE staff_schedule_preferences
+       SET preference_type = 'work_time', start_time = '08:00', end_time = '17:00'
+       WHERE id = 'preference-staff-a'`,
+    ).run();
+    const preferredTimeCandidates = service.administratorQuarterHourStaffingCandidates(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    });
+    const preferredMorning = preferredTimeCandidates.slots
+      .find((slot) => slot.date === "2026-09-01" && slot.startTime === "08:00");
+    assert.deepEqual(preferredMorning.eligibleStaff.map((entry) => entry.staffId), ["staff-a"]);
+    assert.equal(preferredMorning.eligibleStaff[0].effectiveAvailability.source, "preference");
+    database.prepare("DELETE FROM staff_schedule_preferences WHERE id = 'preference-staff-a'").run();
+
     const secondDay = headcount.days.find((day) => day.date === "2026-09-02");
     const ageCompositionChange = secondDay.changes.find((change) => change.time === "10:00");
     assert.equal(ageCompositionChange.before, 1);

@@ -403,7 +403,7 @@ test("rejects overlapping saves, stale versions, family actors, and family API s
   }
 });
 
-test("stores independent staff day-off and work-time preferences with weekly-range review", async () => {
+test("stores independent staff day-off and work-time preferences with effective availability", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "nursery-staff-preferences-"));
   const database = openDatabase(resolve(directory, "preferences.sqlite"));
   try {
@@ -463,8 +463,8 @@ test("stores independent staff day-off and work-time preferences with weekly-ran
       endTime: "17:00",
     });
     preference = september.staff[0].selectedPreference;
-    assert.equal(preference.requiresAdministratorReview, true);
-    assert.match(preference.reviewMessage, /管理者確認/);
+    assert.equal(preference.requiresAdministratorReview, false);
+    assert.equal(preference.reviewMessage, null);
     assert.deepEqual(preference.effectiveAvailability, {
       source: "preference",
       available: true,

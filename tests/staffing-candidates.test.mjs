@@ -11,6 +11,7 @@ import {
 } from "../lib/server/staffing/staff-candidate-repository.mjs";
 import {
   connectRequirementWithStaffCandidates,
+  evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot,
   evaluateStaffEligibilityForQuarterHourSlot,
 } from "../lib/server/staffing/staff-eligibility.mjs";
 
@@ -151,6 +152,102 @@ test("keeps Sunday availability possible and rejects unavailable or inactive sta
     date: "2026-05-11", startTime: "09:00", endTime: "09:15",
   });
   assert.ok(inactive.exclusionReasons.includes("INACTIVE"));
+});
+
+test("uses day-specific preferences before weekly availability for automatic placement", () => {
+  const weeklyStaff = staff({
+    workConditions: [{
+      validFrom: "2026-05-01", validTo: null, employmentType: "常勤",
+      availability: [{ weekday: 1, available: true, startTime: "09:00", endTime: "18:00" }],
+    }],
+  });
+  const preferred = staff({
+    ...weeklyStaff,
+    schedulePreferences: [{
+      date: "2026-05-11", preferenceType: "work_time", startTime: "10:00", endTime: "16:00",
+    }],
+  });
+  const inside = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(preferred, {
+    date: "2026-05-11", startTime: "10:00", endTime: "10:15",
+  });
+  assert.equal(inside.automaticPlacementEligible, true);
+  assert.equal(inside.hasWorkTimePreference, true);
+  assert.deepEqual(inside.effectiveAvailability, {
+    source: "preference", available: true, startTime: "10:00", endTime: "16:00",
+  });
+  for (const slot of [
+    { date: "2026-05-11", startTime: "09:45", endTime: "10:00" },
+    { date: "2026-05-11", startTime: "16:00", endTime: "16:15" },
+  ]) {
+    const outside = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(preferred, slot);
+    assert.equal(outside.automaticPlacementEligible, false);
+    assert.ok(outside.exclusionReasons.includes("OUTSIDE_PREFERENCE_TIME"));
+  }
+
+  const outsideWeekly = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(staff({
+    ...weeklyStaff,
+    schedulePreferences: [{
+      date: "2026-05-11", preferenceType: "work_time", startTime: "08:00", endTime: "17:00",
+    }],
+  }), { date: "2026-05-11", startTime: "08:00", endTime: "08:15" });
+  assert.equal(outsideWeekly.automaticPlacementEligible, true);
+  assert.equal(outsideWeekly.isWithinAvailableTime, true);
+
+  const noPreference = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(weeklyStaff, {
+    date: "2026-05-11", startTime: "09:00", endTime: "09:15",
+  });
+  assert.equal(noPreference.automaticPlacementEligible, true);
+  assert.equal(noPreference.effectiveAvailability.source, "weekly");
+
+  const dayOff = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(staff({
+    ...weeklyStaff,
+    schedulePreferences: [{ date: "2026-05-11", preferenceType: "day_off", startTime: null, endTime: null }],
+  }), { date: "2026-05-11", startTime: "09:00", endTime: "09:15" });
+  assert.equal(dayOff.automaticPlacementEligible, false);
+  assert.equal(dayOff.hasDayOffPreference, true);
+  assert.ok(dayOff.exclusionReasons.includes("PREFERENCE_DAY_OFF"));
+});
+
+test("allows the sixth work day and excludes a seventh across month boundaries", () => {
+  const availability = Array.from({ length: 7 }, (_, weekday) => ({
+    weekday, available: true, startTime: "06:30", endTime: "20:30",
+  }));
+  const scheduledDays = (dates) => dates.map((date) => ({
+    staffId: "staff-1", date, dayType: "work", segments: [],
+  }));
+  const septemberStaff = (dates) => staff({
+    employmentStartDate: "2026-01-01",
+    employmentEndDate: null,
+    validQualifications: [{ type: "licensed_nursery_teacher", validFrom: "2026-01-01", validTo: null }],
+    workConditions: [{ validFrom: "2026-01-01", validTo: null, employmentType: "常勤", availability }],
+    scheduledDays: scheduledDays(dates),
+  });
+  const slot = (date) => ({ date, startTime: "09:00", endTime: "09:15" });
+
+  const sixth = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+    septemberStaff(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"]),
+    slot("2026-09-06"),
+  );
+  assert.equal(sixth.consecutiveWork.consecutiveDays, 6);
+  assert.equal(sixth.violatesConsecutiveWorkLimit, false);
+  assert.equal(sixth.automaticPlacementEligible, true);
+
+  const seventh = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+    septemberStaff(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"]),
+    slot("2026-09-07"),
+  );
+  assert.equal(seventh.consecutiveWork.consecutiveDays, 7);
+  assert.equal(seventh.violatesConsecutiveWorkLimit, true);
+  assert.equal(seventh.automaticPlacementEligible, false);
+  assert.ok(seventh.exclusionReasons.includes("CONSECUTIVE_WORK_LIMIT"));
+
+  const crossing = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+    septemberStaff(["2026-08-29", "2026-08-30", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03"]),
+    slot("2026-09-04"),
+  );
+  assert.equal(crossing.consecutiveWork.startDate, "2026-08-29");
+  assert.equal(crossing.consecutiveWork.consecutiveDays, 7);
+  assert.equal(crossing.automaticPlacementEligible, false);
 });
 
 test("separates recorded roles from childcare eligibility and legal license validity", () => {
@@ -309,6 +406,69 @@ test("loads roles and qualifications independently without promoting legacy ambi
       childcareEligibilityConfigured: true,
       nurseryTeacherQualificationsConfigured: true,
     });
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("loads preferences and only current schedule versions into automatic candidate profiles", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-automatic-candidate-"));
+  const database = openDatabase(resolve(directory, "candidate.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-a", "candidate-admin", "架空 管理者");
+    database.prepare(
+      "INSERT INTO staff_members (id, staff_code, name, employment_start_date, status) VALUES (?, ?, ?, ?, 'active')",
+    ).run("staff-a", "ST0001", "架空 職員", "2026-01-01");
+    database.prepare(
+      `INSERT INTO staff_work_condition_versions
+       (id, staff_id, valid_from, employment_type, created_by_administrator_id)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run("condition-a", "staff-a", "2026-01-01", "常勤", "admin-a");
+    database.prepare(
+      `INSERT INTO staff_weekly_availability
+       (work_condition_version_id, weekday, available, start_time, end_time)
+       VALUES (?, 1, 1, '09:00', '18:00')`,
+    ).run("condition-a");
+    database.prepare(
+      `INSERT INTO staff_qualifications
+       (id, staff_id, qualification_type, valid_from, valid_to)
+       VALUES (?, ?, 'licensed_nursery_teacher', '2026-01-01', NULL)`,
+    ).run("qualification-a", "staff-a");
+    database.prepare(
+      `INSERT INTO staff_schedule_preferences
+       (id, staff_id, date, preference_type, start_time, end_time,
+        created_by_administrator_id, updated_by_administrator_id)
+       VALUES (?, ?, '2026-09-07', 'work_time', '10:00', '16:00', ?, ?)`,
+    ).run("preference-a", "staff-a", "admin-a", "admin-a");
+    database.prepare(
+      `INSERT INTO staff_schedule_months (id, target_month, status, current_version_id)
+       VALUES ('month-a', '2026-09', 'draft', NULL)`,
+    ).run();
+    database.prepare(
+      `INSERT INTO staff_schedule_versions
+       (id, schedule_month_id, version_number, source, status, created_by_administrator_id)
+       VALUES ('version-old', 'month-a', 1, 'manual', 'draft', 'admin-a'),
+              ('version-current', 'month-a', 2, 'manual', 'draft', 'admin-a')`,
+    ).run();
+    database.prepare("UPDATE staff_schedule_months SET current_version_id = 'version-current' WHERE id = 'month-a'").run();
+    database.prepare(
+      `INSERT INTO staff_schedule_days (id, version_id, staff_id, date, day_type)
+       VALUES ('day-old', 'version-old', 'staff-a', '2026-09-01', 'work'),
+              ('day-current', 'version-current', 'staff-a', '2026-09-02', 'work')`,
+    ).run();
+
+    const [profile] = loadStaffCandidateProfiles(database);
+    assert.deepEqual(profile.schedulePreferences, [{
+      date: "2026-09-07", preferenceType: "work_time", startTime: "10:00", endTime: "16:00",
+    }]);
+    assert.deepEqual(profile.scheduledDays.map((day) => day.date), ["2026-09-02"]);
+    assert.equal(evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(profile, {
+      date: "2026-09-07", startTime: "10:00", endTime: "10:15",
+    }).automaticPlacementEligible, true);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

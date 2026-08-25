@@ -309,7 +309,6 @@ export function AdminStaffScheduleManagement() {
           </section>
           {selectedStaff.basicMonthlyScheduledWorkMinutes !== null ? <p className="staff-schedule-baseline">予定 {formatMinutes(selectedStaff.monthlyScheduledWorkMinutes)} / 基本 {formatMinutes(selectedStaff.basicMonthlyScheduledWorkMinutes)} / 差 {formatMinutes(selectedStaff.monthlyScheduledWorkDifferenceMinutes ?? 0)}</p> : null}
           {selectedStaff.daysOff.warning ? <p className="auth-message warning">{selectedStaff.daysOff.warning}</p> : null}
-          {selectedStaff.consecutiveWorkWarnings.map((warning) => <p key={`${warning.startDate}:${warning.endDate}`} className="auth-message warning">{warning.message}（{formatDate(warning.startDate)}～{formatDate(warning.endDate)}）</p>)}
 
           <section className="auth-section staff-schedule-editor">
             <div className="auth-section-heading"><div><span>{selectedStaff.name} / {formatDate(selectedDate)}</span><h3>日別シフト</h3></div>{readOnly ? <span className="admin-state confirmed">閲覧のみ</span> : null}</div>
