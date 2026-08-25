@@ -258,7 +258,6 @@ export const closureDays = sqliteTable(
   "closure_days",
   {
     id: text("id").primaryKey(),
-    submissionPeriodId: text("submission_period_id").notNull().references(() => submissionPeriods.id, { onDelete: "cascade" }),
     date: text("date").notNull(),
     name: text("name").notNull(),
     type: text("type").notNull().default("closed"),
@@ -267,7 +266,7 @@ export const closureDays = sqliteTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("uq_closure_days_period_date").on(table.submissionPeriodId, table.date),
+    uniqueIndex("uq_closure_days_date").on(table.date),
     index("idx_closure_days_date").on(table.date),
   ],
 );

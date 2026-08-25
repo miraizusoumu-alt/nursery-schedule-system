@@ -399,7 +399,7 @@ export function AdminScheduleClient() {
             })}
           </div>
         </div>
-        {!selectedPeriod && selectedTargetMonth ? <p className="auth-message info">{formatMonth(selectedTargetMonth)}の提出対象はまだ登録されていません。月は選択できますが、予定や日付設定は対象期間の登録後に利用できます。</p> : null}
+        {!selectedPeriod && selectedTargetMonth ? <p className="auth-message info">{formatMonth(selectedTargetMonth)}の提出対象はまだ登録されていません。休園日・家庭保育協力日は設定できます。園児の利用予定は対象期間の登録後に確認できます。</p> : null}
         {selectedTargetMonth ? <div className="admin-closure-settings">
           <div className="auth-section-heading">
             <div><span>{formatMonth(selectedTargetMonth)}</span><h3>休園日・家庭保育協力日</h3></div>
@@ -424,16 +424,15 @@ export function AdminScheduleClient() {
                 className={`${isSunday ? "sunday" : weekday === 6 ? "saturday" : ""} ${isClosure ? "closure" : ""} ${isCooperationDay ? "cooperation" : ""}`.trim()}
                 aria-pressed={isSunday || Boolean(closure)}
                 aria-label={`${formatDate(date)} ${isSunday ? "日曜日（休園）" : closure ? `${closure.name}。押すと設定変更または解除` : `${closureMode === "closed" ? "休園日" : "家庭保育協力日"}に設定`}`}
-                disabled={busy !== "" || isSunday || !selectedPeriod}
+                disabled={busy !== "" || isSunday}
                 onClick={() => {
-                  if (!selectedPeriod) return;
                   const sameType = closure?.type === closureMode;
                   const label = closureMode === "closed" ? "休園日" : "家庭保育協力日";
                   const action = sameType ? `${label}設定を解除` : `${label}に設定`;
                   if (!window.confirm(`${date.replaceAll("-", "/")}を${action}しますか？`)) return;
                   void run("closure", async () => {
-                    await api("/api/admin/schedules/closure-day", { method: sameType ? "DELETE" : "POST", body: { submissionPeriodId: selectedPeriod.id, date, dayType: closureMode } });
-                    await reload(selectedPeriod.id, selectedFamily?.id ?? "");
+                    await api("/api/admin/schedules/closure-day", { method: sameType ? "DELETE" : "POST", body: { targetMonth: selectedTargetMonth, date, dayType: closureMode } });
+                    await reload(selectedPeriod?.id ?? "", selectedFamily?.id ?? "", selectedTargetMonth);
                     setMessage(sameType ? `${label}設定を解除しました。` : `${label}を保存しました。`);
                   });
                 }}

@@ -408,6 +408,42 @@ input[type="checkbox"] {
   margin: 0 6px 6px 0;
 }
 
+.family-login-summary,
+.family-login-details {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.family-login-summary > strong {
+  font-size: 0.9rem;
+}
+
+.family-login-summary > button,
+.family-login-details > button {
+  justify-self: start;
+}
+
+.family-login-details {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+
+.family-login-details code {
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+}
+
+.family-login-details small {
+  color: var(--muted);
+}
+
+.family-login-details small.error {
+  color: #a33d32;
+}
+
 .critical-section {
   border-left: 4px solid var(--warning);
   padding-left: 16px;

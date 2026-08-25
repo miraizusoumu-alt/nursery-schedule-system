@@ -264,8 +264,10 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(page, /loadPrototypeStore/);
   assert.match(adminPage, /AdminScheduleClient/);
   assert.match(adminPage, /正式な管理画面|園の運営管理/);
+  assert.doesNotMatch(adminPage, /試作トップ/);
   assert.match(accountsPage, /園の運営管理/);
   assert.match(accountsPage, /AdminNavigation/);
+  assert.doesNotMatch(accountsPage, /試作トップ/);
   assert.match(adminClient, /休園日・家庭保育協力日|最新提出内容の確認|保存前の確認|変更履歴|この家庭の再提出を許可/);
   assert.match(adminClient, /園児の利用予定|月間利用予定時間|予定を確認/);
   assert.doesNotMatch(adminClient, /確認する期間|新しい保護者向け対象月|\{family\.familyCode\}/);
@@ -330,6 +332,12 @@ test("supports password managers, visibility controls, and the eight-character p
   assert.match(authClient, /コピーしました/);
   assert.match(authClient, /保護者用 利用予定表ログイン案内/);
   assert.match(authClient, /navigator\.clipboard\?\.writeText/);
+  assert.match(authClient, /保護者ログインアカウント：作成済み/);
+  assert.match(authClient, /ログイン情報を確認/);
+  assert.match(authClient, /ログイン情報を閉じる/);
+  assert.match(authClient, /copyPasswordToClipboard\(family\.login_id\)/);
+  assert.match(authClient, /パスワードは表示できません。必要な場合は再発行してください。/);
+  assert.doesNotMatch(authClient, /<th>ログインID<\/th>/);
   assert.match(authClient, /type="button" onClick=\{\(event\) => event\.currentTarget\.form\?\.requestSubmit\(\)\}/);
   assert.match(authClient, /event\.preventDefault\(\)/);
   assert.match(authClient, /ログインIDまたはパスワードが正しくありません。/);

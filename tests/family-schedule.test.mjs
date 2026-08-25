@@ -96,8 +96,8 @@ async function insertFixture(database, currentTime) {
   ).run(timestamp, timestamp);
   database.prepare(
     `INSERT INTO closure_days
-     (id, submission_period_id, date, name, type, parent_input_allowed, note, created_at, updated_at)
-     VALUES ('closure-2026-09-21', 'period-2026-09', '2026-09-21', '架空休園日', 'closed', 0, '', ?, ?)`,
+     (id, date, name, type, parent_input_allowed, note, created_at, updated_at)
+     VALUES ('closure-2026-09-21', '2026-09-21', '架空休園日', 'closed', 0, '', ?, ?)`,
   ).run(timestamp, timestamp);
 
   return {
@@ -1658,7 +1658,7 @@ test("connects administrator schedule APIs without exposing them to family sessi
     const forbiddenClosure = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/closure-day", family, {
         method: "POST",
-        body: { submissionPeriodId: "period-2026-09", date: "2026-09-22" },
+        body: { targetMonth: "2026-09", date: "2026-09-22" },
       }),
       { service, authService },
     );
@@ -1666,7 +1666,7 @@ test("connects administrator schedule APIs without exposing them to family sessi
     const closureResponse = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/closure-day", administrator, {
         method: "POST",
-        body: { submissionPeriodId: "period-2026-09", date: "2026-09-22" },
+        body: { targetMonth: "2026-09", date: "2026-09-22" },
       }),
       { service, authService },
     );
@@ -2112,16 +2112,16 @@ test("records Monday-to-Saturday basic patterns and applies them only by explici
 test("distinguishes hard closures from editable family cooperation days in schedules and counts", async () => {
   await withScheduleDatabase(async ({ database, service, fixture }) => {
     assert.throws(
-      () => service.saveClosureDay(fixture.actorA, { submissionPeriodId: "period-2026-09", date: "2026-09-22" }),
+      () => service.saveClosureDay(fixture.actorA, { targetMonth: "2026-09", date: "2026-09-22" }),
       (error) => error.code === "FORBIDDEN",
     );
     const saved = service.saveClosureDay(fixture.actorAdmin, {
-      submissionPeriodId: "period-2026-09",
+      targetMonth: "2026-09",
       date: "2026-09-22",
     });
     assert.equal(saved.name, "休園日");
     assert.equal(database.prepare(
-      "SELECT name FROM closure_days WHERE submission_period_id = 'period-2026-09' AND date = '2026-09-22'",
+      "SELECT name FROM closure_days WHERE date = '2026-09-22'",
     ).get().name, "休園日");
 
     const dashboard = service.dashboard(fixture.actorA);
@@ -2136,7 +2136,7 @@ test("distinguishes hard closures from editable family cooperation days in sched
     assert.equal(fixtureDay.closureName, "休園日");
 
     const cooperation = service.saveClosureDay(fixture.actorAdmin, {
-      submissionPeriodId: "period-2026-09",
+      targetMonth: "2026-09",
       date: "2026-09-23",
       dayType: "family_cooperation",
     });
@@ -2176,12 +2176,75 @@ test("distinguishes hard closures from editable family cooperation days in sched
       submissionPeriodId: "period-2026-09",
     }).days.find((day) => day.date === "2026-09-23").maximum > 0, true);
 
-    service.removeClosureDay(fixture.actorMaster, {
+    const immutableSubmitted = service.latestSubmittedVersion(fixture.actorA);
+    const immutablePayload = rawSubmissionVersion(database, immutableSubmitted.id);
+    database.prepare("UPDATE submission_periods SET status = 'closed' WHERE id = 'period-2026-09'").run();
+    service.saveClosureDay(fixture.actorAdmin, {
+      targetMonth: "2026-09",
+      date: "2026-09-24",
+      dayType: "closed",
+    });
+    service.saveClosureDay(fixture.actorMaster, {
+      targetMonth: "2026-09",
+      date: "2026-09-25",
+      dayType: "family_cooperation",
+    });
+    const postSubmissionExport = service.administratorScheduleExportData(fixture.actorAdmin, {
       submissionPeriodId: "period-2026-09",
+    });
+    assert.equal(postSubmissionExport.dates.find((day) => day.date === "2026-09-24").isClosure, true);
+    assert.equal(postSubmissionExport.dates.find((day) => day.date === "2026-09-25").isClosure, false);
+    assert.equal(service.administratorMonthlyHeadcount(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).days.find((day) => day.date === "2026-09-24").maximum, 0);
+    assert.equal(service.administratorMonthlyHeadcount(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).days.find((day) => day.date === "2026-09-25").maximum > 0, true);
+    assert.deepEqual(rawSubmissionVersion(database, immutableSubmitted.id), immutablePayload);
+
+    for (const input of [
+      { targetMonth: "2026-07", date: "2026-07-14", dayType: "closed" },
+      { targetMonth: "2026-11", date: "2026-11-17", dayType: "family_cooperation" },
+    ]) {
+      service.saveClosureDay(fixture.actorAdmin, input);
+      assert.equal(database.prepare(
+        "SELECT COUNT(*) AS count FROM closure_days WHERE date = ?",
+      ).get(input.date).count, 1);
+      const monthDashboard = service.administratorScheduleDashboard(fixture.actorAdmin, { targetMonth: input.targetMonth });
+      assert.equal(monthDashboard.selectedPeriod, null);
+      assert.equal(monthDashboard.closures.some((closure) => closure.date === input.date), true);
+    }
+
+    assert.throws(
+      () => database.prepare(
+        `INSERT INTO closure_days
+         (id, date, name, type, parent_input_allowed, note, created_at, updated_at)
+         VALUES ('duplicate-closure', '2026-07-14', '重複', 'closed', 0, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ).run(),
+      /UNIQUE constraint failed: closure_days\.date/,
+    );
+
+    database.exec(`
+      INSERT INTO submission_periods
+        (id, target_month, deadline_at, status, is_parent_target, created_at, updated_at)
+      VALUES
+        ('period-2026-07', '2026-07', '2026-06-25T14:59:59.000Z', 'closed', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+        ('period-2026-11', '2026-11', '2026-10-25T14:59:59.000Z', 'draft', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM closure_days WHERE date IN ('2026-07-14', '2026-11-17')").get().count, 2);
+    database.exec("DELETE FROM submission_periods WHERE id IN ('period-2026-07', 'period-2026-11')");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM closure_days WHERE date IN ('2026-07-14', '2026-11-17')").get().count, 2);
+
+    service.removeClosureDay(fixture.actorAdmin, { targetMonth: "2026-07", date: "2026-07-14" });
+    service.removeClosureDay(fixture.actorAdmin, { targetMonth: "2026-11", date: "2026-11-17" });
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM closure_days WHERE date IN ('2026-07-14', '2026-11-17')").get().count, 0);
+
+    service.removeClosureDay(fixture.actorMaster, {
+      targetMonth: "2026-09",
       date: "2026-09-22",
     });
     assert.equal(database.prepare(
-      "SELECT COUNT(*) AS count FROM closure_days WHERE submission_period_id = 'period-2026-09' AND date = '2026-09-22'",
+      "SELECT COUNT(*) AS count FROM closure_days WHERE date = '2026-09-22'",
     ).get().count, 0);
   });
 });

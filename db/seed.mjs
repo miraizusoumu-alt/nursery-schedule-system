@@ -92,10 +92,10 @@ export function seedDevelopmentData(database, now = new Date()) {
     }
     upsert(
       database,
-      `INSERT INTO closure_days (id, submission_period_id, date, name, type, parent_input_allowed, note, created_at, updated_at)
-       VALUES ('demo-closure-2099-04-29', ?, '2099-04-29', '架空休園日', 'closed', 0, '開発確認用の架空データ', ?, ?)
+      `INSERT INTO closure_days (id, date, name, type, parent_input_allowed, note, created_at, updated_at)
+       VALUES ('demo-closure-2099-04-29', '2099-04-29', '架空休園日', 'closed', 0, '開発確認用の架空データ', ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, note = excluded.note, updated_at = excluded.updated_at`,
-      [DEMO_PERIOD_ID, timestamp, timestamp],
+      [timestamp, timestamp],
     );
     upsert(
       database,

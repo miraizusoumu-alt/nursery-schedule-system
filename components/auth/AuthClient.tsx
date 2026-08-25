@@ -411,13 +411,39 @@ export function CredentialNotice({ credential, onDismiss }: { credential: Creden
 function FamilyRow({ family, reload, showCredential, setMessage }: { family: FamilyAccount; reload: () => Promise<void>; showCredential: (value: Credential) => void; setMessage: (value: string) => void }) {
   const [handover, setHandover] = useState(family.handed_over_at ?? "");
   const [stopDate, setStopDate] = useState(family.stop_date ?? "");
+  const [loginVisible, setLoginVisible] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"" | "copied" | "failed">("");
   async function perform(run: () => Promise<void>) {
     try { await run(); await reload(); } catch (error) { setMessage(error instanceof Error ? error.message : "処理できませんでした。"); }
+  }
+  async function copyLoginId() {
+    try {
+      await copyPasswordToClipboard(family.login_id);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
   }
   return (
     <tr>
       <th><strong>{family.display_name}</strong></th>
-      <td>{family.login_id}</td>
+      <td>
+        <div className="family-login-summary">
+          <strong>保護者ログインアカウント：作成済み</strong>
+          <button type="button" aria-expanded={loginVisible} onClick={() => { setLoginVisible((current) => !current); setCopyStatus(""); }}>
+            {loginVisible ? "ログイン情報を閉じる" : "ログイン情報を確認"}
+          </button>
+        </div>
+        {loginVisible ? <div className="family-login-details">
+          <span>ログインID</span>
+          <code>{family.login_id}</code>
+          <button type="button" onClick={() => void copyLoginId()}>コピー</button>
+          {copyStatus ? <small className={copyStatus === "failed" ? "error" : ""} role={copyStatus === "failed" ? "alert" : "status"}>
+            {copyStatus === "copied" ? "コピーしました" : "コピーできませんでした。ブラウザの設定を確認してください。"}
+          </small> : null}
+          <small>パスワードは表示できません。必要な場合は再発行してください。</small>
+        </div> : null}
+      </td>
       <td><input type="date" value={handover} onChange={(event) => setHandover(event.target.value)} /><button type="button" onClick={() => perform(async () => { await api(`/api/admin/families/${family.id}/handover`, { method: "PATCH", body: { handedOverAt: handover } }); })}>使用開始日を保存</button></td>
       <td><input type="date" value={stopDate} onChange={(event) => setStopDate(event.target.value)} /><button type="button" onClick={() => perform(async () => { await api(`/api/admin/families/${family.id}/stop-date`, { method: "PATCH", body: { stopDate } }); })}>{stopDate ? "停止日を保存" : "停止日を解除"}</button></td>
       <td><button type="button" onClick={() => { if (window.confirm("園発行パスワードを再発行し、既存セッションを無効にしますか？")) void perform(async () => { const result = await api<{ credential: Credential }>(`/api/admin/families/${family.id}/reissue-password`, { method: "POST", body: {} }); showCredential(result.credential); }); }}>園発行パスワードを再発行</button></td>
@@ -475,7 +501,7 @@ export function AdminAccountsView() {
       {credential ? <CredentialNotice credential={credential} onDismiss={() => setCredential(null)} /> : null}
       {message ? <p className="auth-message info" role="status">{message}</p> : null}
 
-      <section className="auth-section"><div className="auth-section-heading"><div><span>{families.length}家庭</span><h2>保護者ログインアカウント管理</h2></div></div><p className="admin-schedule-note">新しい保護者ログインアカウントは、園児を登録した後に園児画面から発行します。</p><div className="auth-table-wrap"><table className="auth-table"><thead><tr><th>家庭</th><th>ログインID</th><th>使用開始日</th><th>停止日</th><th>認証</th></tr></thead><tbody>{families.map((family) => <FamilyRow key={family.id} family={family} reload={reload} showCredential={setCredential} setMessage={setMessage} />)}</tbody></table></div></section>
+      <section className="auth-section"><div className="auth-section-heading"><div><span>{families.length}家庭</span><h2>保護者ログインアカウント管理</h2></div></div><p className="admin-schedule-note">新しい保護者ログインアカウントは、園児を登録した後に園児画面から発行します。</p><div className="auth-table-wrap"><table className="auth-table"><thead><tr><th>家庭</th><th>アカウント</th><th>使用開始日</th><th>停止日</th><th>認証</th></tr></thead><tbody>{families.map((family) => <FamilyRow key={family.id} family={family} reload={reload} showCredential={setCredential} setMessage={setMessage} />)}</tbody></table></div></section>
 
       <section className="auth-section"><div className="auth-section-heading"><div><span>通常管理者は通常権限のみ発行可能</span><h2>管理者アカウント発行</h2></div></div><form className="auth-inline-form" onSubmit={issueAdministrator}><label><span>表示名</span><input name="displayName" placeholder="管理者名" required /></label><label><span>ログインID</span><input name="loginId" placeholder="admin.sato" required /></label><label><span>権限</span><select name="role" defaultValue="normal"><option value="normal">通常管理者</option>{isMaster ? <option value="master">マスター管理者</option> : null}</select></label><button className="primary" type="submit">発行</button></form></section>
 
