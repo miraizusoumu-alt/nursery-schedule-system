@@ -48,6 +48,39 @@ type Headcount = {
   days: HeadcountDay[];
 };
 
+type EligibleStaff = {
+  staffId: string;
+  staffName: string;
+  employmentType: string | null;
+  assignedRoles: string[];
+  validQualifications: string[];
+  licensedEligible: boolean;
+};
+
+type StaffingSlot = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  requiredChildcareWorkers: number;
+  requiredLicensedNurseryTeachers: number;
+  eligibleChildcareWorkerCount: number;
+  eligibleLicensedNurseryTeacherCount: number;
+  childcareWorkerShortage: number;
+  licensedNurseryTeacherShortage: number;
+  eligibleStaff: EligibleStaff[];
+  eligibleLicensedStaff: EligibleStaff[];
+};
+
+type StaffingCandidates = {
+  period: { id: string; targetMonth: string; status: string };
+  classificationCapabilities: {
+    childcareEligibilityConfigured: boolean;
+    nurseryTeacherQualificationsConfigured: boolean;
+  };
+  classificationLimitations: string[];
+  slots: StaffingSlot[];
+};
+
 const weekdayLabels = ["日", "月", "火", "水", "木", "金", "土"];
 
 function monthLabel(value: string) {
@@ -65,12 +98,26 @@ const appliedRuleLabels = {
   minimum_staff: "最低2名",
 };
 
+const roleLabels: Record<string, string> = {
+  nursery_teacher_role: "保育士",
+  principal: "園長",
+  manager: "マネージャー",
+  meal_service: "配膳",
+  other: "その他",
+};
+
+const qualificationLabels: Record<string, string> = {
+  licensed_nursery_teacher: "保育士資格",
+  childcare_support_worker_local_childcare: "子育て支援員研修",
+};
+
 function appliedRulesLabel(rules: HeadcountChange["appliedRules"]) {
   return rules.map((rule) => appliedRuleLabels[rule]).join("・");
 }
 
 export function AdminMonthlyHeadcount({ submissionPeriodId }: { submissionPeriodId: string }) {
   const [data, setData] = useState<Headcount | null>(null);
+  const [staffing, setStaffing] = useState<StaffingCandidates | null>(null);
   const [selectedDate, setSelectedDate] = useState("");
   const [error, setError] = useState("");
 
@@ -78,25 +125,34 @@ export function AdminMonthlyHeadcount({ submissionPeriodId }: { submissionPeriod
     if (!submissionPeriodId) return;
     let active = true;
     const query = new URLSearchParams({ submissionPeriodId });
-    void api<{ headcount: Headcount }>(`/api/admin/schedules/headcount?${query}`)
-      .then((result) => {
+    void Promise.all([
+      api<{ headcount: Headcount }>(`/api/admin/schedules/headcount?${query}`),
+      api<{ staffing: StaffingCandidates }>(`/api/admin/schedules/staffing-candidates?${query}`),
+    ])
+      .then(([headcountResult, staffingResult]) => {
         if (!active) return;
-        setData(result.headcount);
-        setSelectedDate(result.headcount.days[0]?.date ?? "");
+        setData(headcountResult.headcount);
+        setStaffing(staffingResult.staffing);
+        setSelectedDate(headcountResult.headcount.days[0]?.date ?? "");
         setError("");
       })
       .catch((caught) => {
         if (!active) return;
         setData(null);
+        setStaffing(null);
         setError(caught instanceof Error ? caught.message : "月間人数を読み込めませんでした。");
       });
     return () => { active = false; };
   }, [submissionPeriodId]);
 
   if (error) return <p className="auth-message error" role="alert">{error}</p>;
-  if (!data) return <p className="auth-message info">月間人数を集計中...</p>;
+  if (!data || !staffing) return <p className="auth-message info">月間人数と職員候補を集計中...</p>;
 
   const selectedDay = data.days.find((day) => day.date === selectedDate) ?? data.days[0] ?? null;
+  const selectedStaffingSlots = staffing.slots.filter((slot) => (
+    slot.date === selectedDay?.date
+    && (slot.requiredChildcareWorkers > 0 || slot.childcareWorkerShortage > 0 || slot.licensedNurseryTeacherShortage > 0)
+  ));
 
   return (
     <section className="auth-section admin-headcount-section">
@@ -135,6 +191,20 @@ export function AdminMonthlyHeadcount({ submissionPeriodId }: { submissionPeriod
           <p>判定：{appliedRulesLabel(change.appliedRules)}（年齢別 {change.ageBasedRequirement}人／3対1 {change.totalChildrenRuleRequirement}人／最低配置 {change.minimumStaffRequirement}人）</p>
           <p>{change.childNames.length ? change.childNames.join("、") : "在園予定なし"}</p>
         </article>)}</div> : <p className="admin-headcount-empty">利用予定なし</p>}
+      </div>
+
+      <div className="admin-staffing-candidate-section">
+        <div className="auth-section-heading"><div><span>{selectedDay ? dateLabel(selectedDay) : "日付未選択"}</span><h3>15分単位の職員候補</h3></div></div>
+        <p className="admin-schedule-note">勤務条件と対象日に有効な資格・研修から候補を判定します。ここでは実際の配置職員はまだ選びません。</p>
+        {selectedStaffingSlots.length ? <div className="admin-staffing-slot-list">{selectedStaffingSlots.map((slot) => {
+          const hasShortage = slot.childcareWorkerShortage > 0 || slot.licensedNurseryTeacherShortage > 0;
+          return <article key={`${slot.date}:${slot.startTime}`} className={hasShortage ? "shortage" : "ready"}>
+            <div className="admin-staffing-slot-summary"><strong>{slot.startTime} - {slot.endTime}</strong><span>必要 {slot.requiredChildcareWorkers}人 / 候補 {slot.eligibleChildcareWorkerCount}人</span><span>保育士資格者 {slot.requiredLicensedNurseryTeachers}人必要 / 候補 {slot.eligibleLicensedNurseryTeacherCount}人</span></div>
+            {slot.childcareWorkerShortage > 0 ? <p className="auth-message error">保育従事者が{slot.childcareWorkerShortage}人不足しています。</p> : null}
+            {slot.licensedNurseryTeacherShortage > 0 ? <p className="auth-message error">保育士資格者が{slot.licensedNurseryTeacherShortage}人不足しています。</p> : null}
+            <details><summary>候補を確認（{slot.eligibleStaff.length}名）</summary>{slot.eligibleStaff.length ? <ul>{slot.eligibleStaff.map((staff) => <li key={staff.staffId}><strong>{staff.staffName}</strong><span>{staff.employmentType ?? "雇用区分未設定"}</span><span>担当：{staff.assignedRoles.length ? staff.assignedRoles.map((role) => roleLabels[role] ?? role).join("、") : "未登録"}</span><span>資格・研修：{staff.validQualifications.map((qualification) => qualificationLabels[qualification] ?? qualification).join("、")}</span></li>)}</ul> : <p>この時間帯の候補職員はいません。</p>}</details>
+          </article>;
+        })}</div> : <p className="admin-headcount-empty">この日の利用予定はなく、必要な保育配置は0人です。</p>}
       </div>
     </section>
   );

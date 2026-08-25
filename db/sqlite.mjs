@@ -36,6 +36,7 @@ export const REQUIRED_APPLICATION_TABLES = [
   "standard_reasons",
   "staff_members",
   "staff_qualifications",
+  "staff_roles",
   "staff_weekly_availability",
   "staff_work_condition_versions",
   "submission_periods",

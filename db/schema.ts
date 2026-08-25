@@ -156,6 +156,27 @@ export const staffQualifications = sqliteTable(
   ],
 );
 
+export const staffRoles = sqliteTable(
+  "staff_roles",
+  {
+    id: text("id").primaryKey(),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    roleType: text("role_type").notNull(),
+    validFrom: text("valid_from").notNull(),
+    validTo: text("valid_to"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_roles_staff_type_from").on(table.staffId, table.roleType, table.validFrom),
+    index("idx_staff_roles_staff_dates").on(table.staffId, table.validFrom, table.validTo),
+    check(
+      "chk_staff_roles_type",
+      sql`${table.roleType} in ('nursery_teacher_role', 'principal', 'manager', 'meal_service', 'other')`,
+    ),
+    check("chk_staff_roles_dates", sql`${table.validTo} is null or ${table.validTo} >= ${table.validFrom}`),
+  ],
+);
+
 export const staffWorkConditionVersions = sqliteTable(
   "staff_work_condition_versions",
   {

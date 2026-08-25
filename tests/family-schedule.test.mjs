@@ -2175,6 +2175,15 @@ test("distinguishes hard closures from editable family cooperation days in sched
     assert.equal(service.administratorMonthlyHeadcount(fixture.actorAdmin, {
       submissionPeriodId: "period-2026-09",
     }).days.find((day) => day.date === "2026-09-23").maximum > 0, true);
+    const quarterHours = service.administratorQuarterHourStaffingCandidates(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    }).slots;
+    assert.ok(quarterHours
+      .filter((slot) => slot.date === "2026-09-22")
+      .every((slot) => slot.requiredChildcareWorkers === 0));
+    assert.equal(quarterHours
+      .find((slot) => slot.date === "2026-09-23" && slot.startTime === "09:00")
+      .requiredChildcareWorkers > 0, true);
 
     const immutableSubmitted = service.latestSubmittedVersion(fixture.actorA);
     const immutablePayload = rawSubmissionVersion(database, immutableSubmitted.id);
@@ -2416,6 +2425,59 @@ test("aggregates the effective monthly schedule with fiscal-age groups and priva
     assert.equal(staffingAt("2026-09-01", "16:00").requiredChildcareWorkers, 2);
     assert.equal(staffingAt("2026-09-01", "16:05").totalChildren, 0);
     assert.equal(staffingAt("2026-09-01", "16:05").requiredChildcareWorkers, 0);
+    for (const [staffId, staffCode, roleType, qualificationType] of [
+      ["staff-a", "ST9001", "nursery_teacher_role", "licensed_nursery_teacher"],
+      ["staff-b", "ST9002", "other", "childcare_support_worker_local_childcare"],
+      ["staff-e", "ST9003", "nursery_teacher_role", null],
+    ]) {
+      database.prepare(
+        `INSERT INTO staff_members (id, staff_code, name, employment_start_date, status)
+         VALUES (?, ?, ?, '2026-04-01', 'active')`,
+      ).run(staffId, staffCode, `架空 ${staffId}`);
+      database.prepare(
+        `INSERT INTO staff_roles (id, staff_id, role_type, valid_from)
+         VALUES (?, ?, ?, '2026-04-01')`,
+      ).run(`role-${staffId}`, staffId, roleType);
+      if (qualificationType) {
+        database.prepare(
+          `INSERT INTO staff_qualifications (id, staff_id, qualification_type, valid_from)
+           VALUES (?, ?, ?, '2026-04-01')`,
+        ).run(`qualification-${staffId}`, staffId, qualificationType);
+      }
+      database.prepare(
+        `INSERT INTO staff_work_condition_versions
+         (id, staff_id, valid_from, employment_type, created_by_administrator_id)
+         VALUES (?, ?, '2026-04-01', '常勤', ?)`,
+      ).run(`condition-${staffId}`, staffId, fixture.actorAdmin.id);
+      database.prepare(
+        `INSERT INTO staff_weekly_availability
+         (work_condition_version_id, weekday, available, start_time, end_time)
+         VALUES (?, 2, 1, '09:00', '16:00')`,
+      ).run(`condition-${staffId}`);
+    }
+    const quarterHourCandidates = service.administratorQuarterHourStaffingCandidates(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
+    });
+    assert.throws(
+      () => service.administratorQuarterHourStaffingCandidates(fixture.actorA, {
+        submissionPeriodId: "period-2026-09",
+      }),
+      (error) => error.code === "FORBIDDEN",
+    );
+    const quarterAt = (date, startTime) => quarterHourCandidates.slots
+      .find((slot) => slot.date === date && slot.startTime === startTime);
+    assert.equal(quarterAt("2026-09-01", "16:00").requiredChildcareWorkers, 2);
+    assert.equal(quarterAt("2026-09-01", "16:15").requiredChildcareWorkers, 0);
+    assert.equal(quarterAt("2026-09-01", "15:45").childcareCandidateAssessmentStatus, "READY");
+    assert.equal(quarterAt("2026-09-01", "15:45").eligibleChildcareWorkerCount, 2);
+    assert.equal(quarterAt("2026-09-01", "15:45").eligibleLicensedNurseryTeacherCount, 1);
+    assert.equal(quarterAt("2026-09-01", "15:45").childcareWorkerShortage, 0);
+    assert.equal(quarterAt("2026-09-01", "15:45").licensedNurseryTeacherShortage, 0);
+    assert.deepEqual(quarterAt("2026-09-01", "15:45").eligibleStaff.map((entry) => entry.staffId), ["staff-a", "staff-b"]);
+    assert.equal(quarterAt("2026-09-01", "16:00").eligibleChildcareWorkerCount, 0);
+    assert.equal(quarterAt("2026-09-01", "16:00").childcareWorkerShortage, 2);
+    assert.equal(quarterAt("2026-09-01", "16:00").licensedNurseryTeacherShortage, 1);
+    assert.equal(quarterHourCandidates.classificationLimitations.length, 0);
 
     const secondDay = headcount.days.find((day) => day.date === "2026-09-02");
     const ageCompositionChange = secondDay.changes.find((change) => change.time === "10:00");
@@ -2431,6 +2493,9 @@ test("aggregates the effective monthly schedule with fiscal-age groups and priva
     assert.ok(staffingRequirements.slots
       .filter((slot) => slot.date === "2026-09-21")
       .every((slot) => slot.totalChildren === 0 && slot.requiredChildcareWorkers === 0));
+    assert.ok(quarterHourCandidates.slots
+      .filter((slot) => slot.date === "2026-09-21")
+      .every((slot) => slot.requiredChildcareWorkers === 0 && slot.requiredLicensedNurseryTeachers === 0));
 
     const adminDashboard = service.administratorScheduleDashboard(fixture.actorAdmin, {
       submissionPeriodId: "period-2026-09",
@@ -2684,6 +2749,16 @@ test("serves Excel downloads only to authenticated administrators", async () => 
       { service, authService },
     );
     assert.equal(forbiddenHeadcount.status, 403);
+    const unauthenticatedCandidates = await handleAdminScheduleApiRequest(
+      new Request("http://localhost/api/admin/schedules/staffing-candidates?submissionPeriodId=period-2026-09"),
+      { service, authService },
+    );
+    assert.equal(unauthenticatedCandidates.status, 401);
+    const forbiddenCandidates = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/staffing-candidates?submissionPeriodId=period-2026-09", family),
+      { service, authService },
+    );
+    assert.equal(forbiddenCandidates.status, 403);
 
     const missing = await handleAdminScheduleApiRequest(
       apiRequest("/api/admin/schedules/export?submissionPeriodId=missing-period", administrator),
@@ -2712,5 +2787,13 @@ test("serves Excel downloads only to authenticated administrators", async () => 
     assert.equal(headcountResponse.status, 200);
     const headcount = (await headcountResponse.json()).headcount;
     assert.deepEqual(headcount.ageGroups, ["0歳児", "1歳児", "2歳児"]);
+    const candidateResponse = await handleAdminScheduleApiRequest(
+      apiRequest("/api/admin/schedules/staffing-candidates?submissionPeriodId=period-2026-09", administrator),
+      { service, authService },
+    );
+    assert.equal(candidateResponse.status, 200);
+    const staffing = (await candidateResponse.json()).staffing;
+    assert.equal(staffing.classificationCapabilities.childcareEligibilityConfigured, true);
+    assert.equal(staffing.slots[0].eligibleChildcareWorkerCount, 0);
   });
 });

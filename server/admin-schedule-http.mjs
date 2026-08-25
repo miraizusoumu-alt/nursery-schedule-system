@@ -45,6 +45,15 @@ export async function handleAdminScheduleApiRequest(request, { service, authServ
       });
     }
 
+    if (request.method === "GET" && url.pathname === "/api/admin/schedules/staffing-candidates") {
+      return json({
+        ok: true,
+        staffing: service.administratorQuarterHourStaffingCandidates(session.actor, {
+          submissionPeriodId: url.searchParams.get("submissionPeriodId"),
+        }),
+      });
+    }
+
     if (request.method === "GET" && url.pathname === "/api/admin/schedules/export") {
       const data = service.administratorScheduleExportData(session.actor, {
         submissionPeriodId: url.searchParams.get("submissionPeriodId"),

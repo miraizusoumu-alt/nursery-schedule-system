@@ -20,7 +20,9 @@ export async function handleStaffManagementApiRequest(request, { service, authSe
     const body = await readJson(request);
     const staffUpdate = routeMatch(url.pathname, /^\/api\/admin\/staff\/([^/]+)$/);
     const qualificationCreate = routeMatch(url.pathname, /^\/api\/admin\/staff\/([^/]+)\/qualifications$/);
+    const qualificationUpdate = routeMatch(url.pathname, /^\/api\/admin\/staff\/([^/]+)\/qualifications\/([^/]+)$/);
     const responsibilityCreate = routeMatch(url.pathname, /^\/api\/admin\/staff\/([^/]+)\/responsibilities$/);
+    const roleUpdate = routeMatch(url.pathname, /^\/api\/admin\/staff\/([^/]+)\/roles\/([^/]+)$/);
     const workConditionCreate = routeMatch(url.pathname, /^\/api\/admin\/staff\/([^/]+)\/work-conditions$/);
 
     if (request.method === "POST" && url.pathname === "/api/admin/staff") {
@@ -32,8 +34,20 @@ export async function handleStaffManagementApiRequest(request, { service, authSe
     if (request.method === "POST" && qualificationCreate) {
       return json({ ok: true, management: service.addQualification(session.actor, qualificationCreate[0], body) }, 201);
     }
+    if (request.method === "PUT" && qualificationUpdate) {
+      return json({ ok: true, management: service.updateQualification(session.actor, qualificationUpdate[0], qualificationUpdate[1], body) });
+    }
+    if (request.method === "DELETE" && qualificationUpdate) {
+      return json({ ok: true, management: service.deleteQualification(session.actor, qualificationUpdate[0], qualificationUpdate[1]) });
+    }
     if (request.method === "POST" && responsibilityCreate) {
       return json({ ok: true, management: service.addResponsibilities(session.actor, responsibilityCreate[0], body) }, 201);
+    }
+    if (request.method === "PUT" && roleUpdate) {
+      return json({ ok: true, management: service.updateRole(session.actor, roleUpdate[0], roleUpdate[1], body) });
+    }
+    if (request.method === "DELETE" && roleUpdate) {
+      return json({ ok: true, management: service.deleteRole(session.actor, roleUpdate[0], roleUpdate[1]) });
     }
     if (request.method === "POST" && workConditionCreate) {
       return json({ ok: true, management: service.createWorkConditionVersion(session.actor, workConditionCreate[0], body) }, 201);

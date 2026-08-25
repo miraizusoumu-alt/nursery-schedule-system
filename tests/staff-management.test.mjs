@@ -116,35 +116,77 @@ test("auto-numbers staff codes and updates staff without requiring code input", 
   });
 });
 
-test("stores multiple responsibility categories and rejects invalid categories or missing staff", async () => {
+test("stores roles and legal qualifications separately with editable inclusive periods", async () => {
   await withStaffDatabase(async ({ database, service }) => {
     const actor = { type: "administrator", id: "normal-staff-admin", role: "normal", mustChangePassword: false };
     const staffId = service.createStaff(actor, {
       name: "架空 資格", employmentStartDate: "2026-04-01",
     }).staff[0].id;
-    const management = service.addQualification(actor, staffId, {
-      qualificationType: "保育士", validFrom: "2026-04-01", validTo: "2031-03-31",
+    let management = service.addQualification(actor, staffId, {
+      qualificationType: "licensed_nursery_teacher", validFrom: "2026-04-01", validTo: "2031-03-31",
     });
     assert.deepEqual(management.staff[0].qualifications.map(({ qualificationType, validFrom, validTo }) => ({ qualificationType, validFrom, validTo })), [
-      { qualificationType: "保育士", validFrom: "2026-04-01", validTo: "2031-03-31" },
+      { qualificationType: "licensed_nursery_teacher", validFrom: "2026-04-01", validTo: "2031-03-31" },
     ]);
-    const multiple = service.addResponsibilities(actor, staffId, {
-      responsibilityTypes: ["園長", "マネージャー", "配膳"], validFrom: "2026-04-01",
+    management = service.addResponsibilities(actor, staffId, {
+      responsibilityTypes: ["principal", "manager", "meal_service"], validFrom: "2026-04-01",
     });
     assert.deepEqual(
-      multiple.staff[0].qualifications.map(({ qualificationType }) => qualificationType).sort(),
-      ["マネージャー", "保育士", "園長", "配膳"].sort(),
+      management.staff[0].roles.map(({ roleType }) => roleType).sort(),
+      ["manager", "meal_service", "principal"],
     );
+    assert.deepEqual(management.staff[0].qualifications.map(({ qualificationType }) => qualificationType), ["licensed_nursery_teacher"]);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_roles").get().count, 3);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_qualifications").get().count, 1);
     assert.equal(
       database.prepare("SELECT COUNT(*) AS count FROM operation_logs WHERE operation = 'staff_responsibilities.created'").get().count,
       1,
     );
+    const role = management.staff[0].roles.find(({ roleType }) => roleType === "principal");
+    management = service.updateRole(actor, staffId, role.id, {
+      roleType: "principal", validFrom: "2026-05-01", validTo: "2027-03-31",
+    });
+    assert.deepEqual(
+      management.staff[0].roles.find(({ id }) => id === role.id),
+      { ...role, validFrom: "2026-05-01", validTo: "2027-03-31" },
+    );
+    const qualification = management.staff[0].qualifications[0];
+    management = service.updateQualification(actor, staffId, qualification.id, {
+      qualificationType: "childcare_support_worker_local_childcare", validFrom: "2026-05-01", validTo: "2027-03-31",
+    });
+    assert.equal(management.staff[0].qualifications[0].qualificationType, "childcare_support_worker_local_childcare");
+    management = service.deleteRole(actor, staffId, role.id);
+    assert.equal(management.staff[0].roles.some(({ id }) => id === role.id), false);
+    management = service.deleteQualification(actor, staffId, qualification.id);
+    assert.equal(management.staff[0].qualifications.length, 0);
     expectAuthError(() => service.addResponsibilities(actor, staffId, {
       responsibilityTypes: ["看護師"], validFrom: "2026-04-01",
     }), "INVALID_RESPONSIBILITY_CATEGORY");
     expectAuthError(() => service.addQualification(actor, "missing-staff", {
-      qualificationType: "看護師", validFrom: "2026-04-01",
+      qualificationType: "licensed_nursery_teacher", validFrom: "2026-04-01",
     }), "NOT_FOUND");
+    expectAuthError(() => service.addQualification(actor, staffId, {
+      qualificationType: "保育士", validFrom: "2026-04-01",
+    }), "INVALID_QUALIFICATION_TYPE");
+  });
+});
+
+test("does not present legacy responsibility rows as legal qualifications", async () => {
+  await withStaffDatabase(async ({ database, service }) => {
+    const actor = { type: "administrator", id: "normal-staff-admin", role: "normal", mustChangePassword: false };
+    const staffId = service.createStaff(actor, {
+      name: "架空 旧混在確認", employmentStartDate: "2026-04-01",
+    }).staff[0].id;
+    database.prepare(
+      `INSERT INTO staff_qualifications
+       (id, staff_id, qualification_type, valid_from, valid_to, created_at, updated_at)
+       VALUES ('legacy-responsibility-row', ?, '保育士', '2026-04-01', NULL, '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z')`,
+    ).run(staffId);
+
+    const management = service.staffManagement(actor);
+    assert.deepEqual(management.staff[0].roles, []);
+    assert.deepEqual(management.staff[0].qualifications, []);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_qualifications WHERE staff_id = ?").get(staffId).count, 1);
   });
 });
 
@@ -243,11 +285,19 @@ test("protects staff-management HTTP APIs with administrator sessions and CSRF",
     const staffId = service.staffManagement({ type: "administrator", id: "master-staff-admin", role: "master", mustChangePassword: false }).staff[0].id;
     const responsibilities = await handleStaffManagementApiRequest(
       apiRequest(`/api/admin/staff/${staffId}/responsibilities`, master, {
-        method: "POST", body: { responsibilityTypes: ["保育士", "配膳"], validFrom: "2026-04-01" },
+        method: "POST", body: { responsibilityTypes: ["nursery_teacher_role", "meal_service"], validFrom: "2026-04-01" },
       }),
       { service, authService },
     );
     assert.equal(responsibilities.status, 201);
-    assert.deepEqual((await responsibilities.json()).management.staff[0].qualifications.map(({ qualificationType }) => qualificationType).sort(), ["保育士", "配膳"]);
+    assert.deepEqual((await responsibilities.json()).management.staff[0].roles.map(({ roleType }) => roleType).sort(), ["meal_service", "nursery_teacher_role"]);
+    const qualification = await handleStaffManagementApiRequest(
+      apiRequest(`/api/admin/staff/${staffId}/qualifications`, master, {
+        method: "POST", body: { qualificationType: "licensed_nursery_teacher", validFrom: "2026-04-01" },
+      }),
+      { service, authService },
+    );
+    assert.equal(qualification.status, 201);
+    assert.deepEqual((await qualification.json()).management.staff[0].qualifications.map(({ qualificationType }) => qualificationType), ["licensed_nursery_teacher"]);
   });
 });

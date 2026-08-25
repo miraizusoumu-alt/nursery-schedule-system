@@ -18,6 +18,13 @@ type Qualification = {
   validTo: string | null;
 };
 
+type StaffRole = {
+  id: string;
+  roleType: string;
+  validFrom: string;
+  validTo: string | null;
+};
+
 type WorkCondition = {
   id: string;
   validFrom: string;
@@ -37,6 +44,7 @@ type StaffMember = {
   employmentStartDate: string;
   employmentEndDate: string | null;
   status: "active" | "inactive";
+  roles: StaffRole[];
   qualifications: Qualification[];
   conditions: WorkCondition[];
   currentCondition: WorkCondition | null;
@@ -61,7 +69,21 @@ const weekdays = [
   { value: 6, label: "土曜日" },
 ];
 
-const responsibilityCategories = ["保育士", "園長", "マネージャー", "配膳", "その他"];
+const roleOptions = [
+  { value: "nursery_teacher_role", label: "保育士" },
+  { value: "principal", label: "園長" },
+  { value: "manager", label: "マネージャー" },
+  { value: "meal_service", label: "配膳" },
+  { value: "other", label: "その他" },
+];
+const qualificationOptions = [
+  { value: "licensed_nursery_teacher", label: "保育士資格" },
+  { value: "childcare_support_worker_local_childcare", label: "子育て支援員研修修了（地域保育コース・地域型保育）" },
+];
+
+function optionLabel(options: Array<{ value: string; label: string }>, value: string) {
+  return options.find((option) => option.value === value)?.label ?? value;
+}
 const staffTimeOptions = Array.from({ length: ((20 * 60 + 30) - (6 * 60 + 30)) / 15 + 1 }, (_, index) => {
   const minutes = 6 * 60 + 30 + index * 15;
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -103,8 +125,13 @@ export function AdminStaffManagement() {
   const [isNew, setIsNew] = useState(false);
   const [staffForm, setStaffForm] = useState<StaffForm>(emptyStaffForm());
   const [responsibilityTypes, setResponsibilityTypes] = useState<string[]>([]);
+  const [roleFrom, setRoleFrom] = useState(localDateKey());
+  const [roleTo, setRoleTo] = useState("");
+  const [editingRoleId, setEditingRoleId] = useState("");
+  const [qualificationType, setQualificationType] = useState(qualificationOptions[0].value);
   const [qualificationFrom, setQualificationFrom] = useState(localDateKey());
   const [qualificationTo, setQualificationTo] = useState("");
+  const [editingQualificationId, setEditingQualificationId] = useState("");
   const [conditionFrom, setConditionFrom] = useState(localDateKey());
   const [conditionTo, setConditionTo] = useState("");
   const [employmentType, setEmploymentType] = useState("常勤");
@@ -130,6 +157,13 @@ export function AdminStaffManagement() {
       status: staff.status,
     });
     setResponsibilityTypes([]);
+    setRoleFrom(localDateKey());
+    setRoleTo("");
+    setEditingRoleId("");
+    setQualificationType(qualificationOptions[0].value);
+    setQualificationFrom(localDateKey());
+    setQualificationTo("");
+    setEditingQualificationId("");
     setConditionFrom(localDateKey());
     setConditionTo("");
     setEmploymentType(condition?.employmentType ?? "常勤");
@@ -185,6 +219,8 @@ export function AdminStaffManagement() {
     setIsNew(true);
     setStaffForm(emptyStaffForm());
     setResponsibilityTypes([]);
+    setEditingRoleId("");
+    setEditingQualificationId("");
     setMessage("");
     setError("");
   }
@@ -265,29 +301,101 @@ export function AdminStaffManagement() {
           {!isNew && selectedStaff ? <>
             <div className="admin-staff-subsection">
               <h3><AdminIcon name="badge" />担当区分</h3>
-              {selectedStaff.qualifications.length ? <ul className="admin-staff-history">{selectedStaff.qualifications.map((qualification) => (
-                <li key={qualification.id}><strong>{qualification.qualificationType}</strong><span>{qualification.validFrom} - {qualification.validTo ?? "期限なし"}</span></li>
+              <p className="admin-schedule-note">園内で担当する仕事です。担当区分の「保育士」は、法的な保育士資格の登録とは別です。</p>
+              {selectedStaff.roles.length ? <ul className="admin-staff-history">{selectedStaff.roles.map((role) => (
+                <li key={role.id}><span><strong>{optionLabel(roleOptions, role.roleType)}</strong><span>{role.validFrom} - {role.validTo ?? "期限なし"}</span></span><span className="admin-staff-record-actions"><button type="button" disabled={busy !== ""} onClick={() => {
+                  setEditingRoleId(role.id);
+                  setResponsibilityTypes([role.roleType]);
+                  setRoleFrom(role.validFrom);
+                  setRoleTo(role.validTo ?? "");
+                }}>編集</button><button type="button" disabled={busy !== ""} onClick={() => {
+                  if (!window.confirm(`担当区分「${optionLabel(roleOptions, role.roleType)}」を削除しますか？`)) return;
+                  void run("role-delete", async () => {
+                    const result = await api<{ management: Management }>(`/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/roles/${encodeURIComponent(role.id)}`, { method: "DELETE", body: {} });
+                    acceptManagement(result.management, selectedStaff.id);
+                    setMessage("担当区分を削除しました。");
+                  });
+                }}>削除</button></span></li>
               ))}</ul> : <p className="admin-schedule-note">この職員の担当区分は登録されていません。</p>}
               <form className="admin-schedule-form-row" onSubmit={(event) => {
                 event.preventDefault();
-                if (!window.confirm(`${selectedStaff.name}へ担当区分「${responsibilityTypes.join("、")}」を追加しますか？`)) return;
-                void run("qualification", async () => {
-                  const result = await api<{ management: Management }>(`/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/responsibilities`, {
-                    method: "POST",
-                    body: { responsibilityTypes, validFrom: qualificationFrom, validTo: qualificationTo },
+                const labels = responsibilityTypes.map((type) => optionLabel(roleOptions, type)).join("、");
+                if (!window.confirm(`${selectedStaff.name}の担当区分「${labels}」を${editingRoleId ? "更新" : "登録"}しますか？`)) return;
+                void run("role", async () => {
+                  const path = editingRoleId
+                    ? `/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/roles/${encodeURIComponent(editingRoleId)}`
+                    : `/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/responsibilities`;
+                  const body = editingRoleId
+                    ? { roleType: responsibilityTypes[0], validFrom: roleFrom, validTo: roleTo }
+                    : { responsibilityTypes, validFrom: roleFrom, validTo: roleTo };
+                  const result = await api<{ management: Management }>(path, {
+                    method: editingRoleId ? "PUT" : "POST",
+                    body,
                   });
                   acceptManagement(result.management, selectedStaff.id);
                   setResponsibilityTypes([]);
-                  setMessage("担当区分を登録しました。");
+                  setEditingRoleId("");
+                  setRoleFrom(localDateKey());
+                  setRoleTo("");
+                  setMessage(editingRoleId ? "担当区分を更新しました。" : "担当区分を登録しました。");
                 });
               }}>
-                <fieldset className="admin-responsibility-options"><legend>追加する担当区分（複数選択可）</legend>{responsibilityCategories.map((category) => <label key={category}><input type="checkbox" checked={responsibilityTypes.includes(category)} onChange={(event) => {
+                <fieldset className="admin-responsibility-options"><legend>{editingRoleId ? "変更する担当区分" : "追加する担当区分（複数選択可）"}</legend>{roleOptions.map((option) => <label key={option.value}><input type="checkbox" checked={responsibilityTypes.includes(option.value)} onChange={(event) => {
                   const checked = event.currentTarget.checked;
-                  setResponsibilityTypes((current) => checked ? [...current, category] : current.filter((value) => value !== category));
-                }} /><span>{category}</span></label>)}</fieldset>
+                  setResponsibilityTypes((current) => checked
+                    ? editingRoleId ? [option.value] : [...new Set([...current, option.value])]
+                    : current.filter((value) => value !== option.value));
+                }} /><span>{option.label}</span></label>)}</fieldset>
+                <label><span>有効開始日</span><input required type="date" value={roleFrom} onChange={(event) => setRoleFrom(event.currentTarget.value)} /></label>
+                <label><span>有効終了日</span><input type="date" value={roleTo} onChange={(event) => setRoleTo(event.currentTarget.value)} /></label>
+                <button type="submit" disabled={busy !== "" || !responsibilityTypes.length}>{busy === "role" ? "保存中..." : editingRoleId ? "担当区分を更新" : "担当区分を登録"}</button>
+                {editingRoleId ? <button type="button" disabled={busy !== ""} onClick={() => { setEditingRoleId(""); setResponsibilityTypes([]); setRoleFrom(localDateKey()); setRoleTo(""); }}>編集をやめる</button> : null}
+              </form>
+            </div>
+
+            <div className="admin-staff-subsection">
+              <h3><AdminIcon name="badge" />資格・研修</h3>
+              <p className="admin-schedule-note">保育配置の法的な候補判定に使用します。担当区分とは別に、有効期間を確認して登録してください。</p>
+              {selectedStaff.qualifications.length ? <ul className="admin-staff-history">{selectedStaff.qualifications.map((qualification) => (
+                <li key={qualification.id}><span><strong>{optionLabel(qualificationOptions, qualification.qualificationType)}</strong><span>{qualification.validFrom} - {qualification.validTo ?? "期限なし"}</span></span><span className="admin-staff-record-actions"><button type="button" disabled={busy !== ""} onClick={() => {
+                  setEditingQualificationId(qualification.id);
+                  setQualificationType(qualification.qualificationType);
+                  setQualificationFrom(qualification.validFrom);
+                  setQualificationTo(qualification.validTo ?? "");
+                }}>編集</button><button type="button" disabled={busy !== ""} onClick={() => {
+                  if (!window.confirm(`資格・研修「${optionLabel(qualificationOptions, qualification.qualificationType)}」を削除しますか？`)) return;
+                  void run("qualification-delete", async () => {
+                    const result = await api<{ management: Management }>(`/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/qualifications/${encodeURIComponent(qualification.id)}`, { method: "DELETE", body: {} });
+                    acceptManagement(result.management, selectedStaff.id);
+                    setMessage("資格・研修を削除しました。");
+                  });
+                }}>削除</button></span></li>
+              ))}</ul> : <p className="admin-schedule-note">この職員の資格・研修は登録されていません。</p>}
+              <form className="admin-schedule-form-row" onSubmit={(event) => {
+                event.preventDefault();
+                const label = optionLabel(qualificationOptions, qualificationType);
+                if (!window.confirm(`${selectedStaff.name}の資格・研修「${label}」を${editingQualificationId ? "更新" : "登録"}しますか？`)) return;
+                void run("qualification", async () => {
+                  const path = editingQualificationId
+                    ? `/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/qualifications/${encodeURIComponent(editingQualificationId)}`
+                    : `/api/admin/staff/${encodeURIComponent(selectedStaff.id)}/qualifications`;
+                  const result = await api<{ management: Management }>(path, {
+                    method: editingQualificationId ? "PUT" : "POST",
+                    body: { qualificationType, validFrom: qualificationFrom, validTo: qualificationTo },
+                  });
+                  acceptManagement(result.management, selectedStaff.id);
+                  setEditingQualificationId("");
+                  setQualificationType(qualificationOptions[0].value);
+                  setQualificationFrom(localDateKey());
+                  setQualificationTo("");
+                  setMessage(editingQualificationId ? "資格・研修を更新しました。" : "資格・研修を登録しました。");
+                });
+              }}>
+                <label className="admin-schedule-grow"><span>資格・研修</span><select value={qualificationType} onChange={(event) => setQualificationType(event.currentTarget.value)}>{qualificationOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                 <label><span>有効開始日</span><input required type="date" value={qualificationFrom} onChange={(event) => setQualificationFrom(event.currentTarget.value)} /></label>
                 <label><span>有効終了日</span><input type="date" value={qualificationTo} onChange={(event) => setQualificationTo(event.currentTarget.value)} /></label>
-                <button type="submit" disabled={busy !== "" || !responsibilityTypes.length}>{busy === "qualification" ? "登録中..." : "担当区分を登録"}</button>
+                <button type="submit" disabled={busy !== ""}>{busy === "qualification" ? "保存中..." : editingQualificationId ? "資格・研修を更新" : "資格・研修を登録"}</button>
+                {editingQualificationId ? <button type="button" disabled={busy !== ""} onClick={() => { setEditingQualificationId(""); setQualificationType(qualificationOptions[0].value); setQualificationFrom(localDateKey()); setQualificationTo(""); }}>編集をやめる</button> : null}
               </form>
             </div>
 

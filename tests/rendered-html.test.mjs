@@ -121,6 +121,12 @@ test("keeps the existing screens while domain and storage logic stay separated",
   assert.match(staffManagement, /勤務開始日/);
   assert.match(staffManagement, /担当区分を登録/);
   assert.match(staffManagement, /保育士.*園長.*マネージャー.*配膳.*その他/s);
+  assert.match(staffManagement, /資格・研修/);
+  assert.match(staffManagement, /保育士資格/);
+  assert.match(staffManagement, /子育て支援員研修修了/);
+  assert.match(staffManagement, /licensed_nursery_teacher/);
+  assert.match(staffManagement, /childcare_support_worker_local_childcare/);
+  assert.match(adminClient, /<AdminMonthlyHeadcount/);
   assert.match(staffManagement, /const checked = event\.currentTarget\.checked/);
   assert.doesNotMatch(staffManagement, /setResponsibilityTypes\(\(current\) => event\.currentTarget\.checked/);
   assert.match(staffManagement, /職員を選択してください/);
