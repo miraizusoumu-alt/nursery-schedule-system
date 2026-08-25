@@ -293,7 +293,9 @@ test("connects protected administrator schedule operations without changing the 
   assert.doesNotMatch(childManagement, /家庭所属の開始日|家庭所属の終了日/);
   assert.match(childManagement, /基本利用予定を保存/);
   assert.match(headcount, /0歳児.*1歳児.*2歳児.*合計/s);
-  assert.match(headcount, /人数が変わる時刻だけ/);
+  assert.match(headcount, /年齢別の園児人数または必要人数が変わる時刻だけ/);
+  assert.match(headcount, /必要保育従事者/);
+  assert.match(headcount, /うち保育士資格者/);
   assert.match(adminClient, /EFFECTIVE_VERSION_CHANGED|NO_CHANGES/);
   assert.match(adminHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
   assert.match(adminHttp, /assertCsrf/);

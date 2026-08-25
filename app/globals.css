@@ -2701,6 +2701,25 @@ h2 {
   font-weight: 700;
 }
 
+.admin-headcount-guidance {
+  display: grid;
+  gap: 5px;
+  border-left: 4px solid #4e8a72;
+  background: #f3f8f6;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.admin-headcount-guidance p {
+  margin: 0;
+}
+
+.admin-headcount-guidance strong {
+  color: var(--foreground);
+}
+
 .admin-headcount-table-wrap {
   max-width: 100%;
   overflow-x: auto;
@@ -2805,6 +2824,18 @@ h2 {
   font-size: 0.84rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.admin-headcount-change-list .admin-headcount-staffing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: #244d40;
+}
+
+.admin-headcount-staffing strong,
+.admin-headcount-staffing span {
+  white-space: nowrap;
 }
 
 .admin-headcount-change-main {

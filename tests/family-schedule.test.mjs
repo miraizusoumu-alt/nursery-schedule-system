@@ -2363,17 +2363,17 @@ test("aggregates the effective monthly schedule with fiscal-age groups and priva
 
     let dashboard = service.dashboard(fixture.actorA);
     dashboard = service.updateChildSchedule(fixture.actorA, "child-a1", {
-      days: daysWithPatch(dashboard, "child-a1", "2026-09-01", {
-        usageStatus: "using",
-        arrivalTime: "09:00",
-        departureTime: "16:00",
+      days: dashboard.children.find((entry) => entry.id === "child-a1").schedule.days.map((day) => {
+        if (day.date === "2026-09-01") return { ...day, usageStatus: "using", arrivalTime: "09:00", departureTime: "16:00" };
+        if (day.date === "2026-09-02") return { ...day, usageStatus: "using", arrivalTime: "09:00", departureTime: "09:55" };
+        return day;
       }),
     });
     service.updateChildSchedule(fixture.actorA, "child-a2", {
-      days: daysWithPatch(dashboard, "child-a2", "2026-09-01", {
-        usageStatus: "using",
-        arrivalTime: "10:00",
-        departureTime: "15:00",
+      days: dashboard.children.find((entry) => entry.id === "child-a2").schedule.days.map((day) => {
+        if (day.date === "2026-09-01") return { ...day, usageStatus: "using", arrivalTime: "10:00", departureTime: "15:00" };
+        if (day.date === "2026-09-02") return { ...day, usageStatus: "using", arrivalTime: "10:00", departureTime: "15:00" };
+        return day;
       }),
     });
     service.submitFamilySchedules(fixture.actorA);
@@ -2392,22 +2392,45 @@ test("aggregates the effective monthly schedule with fiscal-age groups and priva
     ]);
     assert.deepEqual(firstDay.changes[0].byAgeGroup, { "0歳児": 1, "1歳児": 0, "2歳児": 0 });
     assert.deepEqual(firstDay.changes[0].childNames, ["はると（山）"]);
+    assert.equal(firstDay.changes[0].requiredChildcareWorkers, 2);
+    assert.equal(firstDay.changes[0].requiredLicensedNurseryTeachers, 1);
+    assert.deepEqual(firstDay.changes[0].appliedRules, ["minimum_staff"]);
     assert.deepEqual(firstDay.changes[1].childNames, ["はると（山）", "みお"]);
     assert.ok(!JSON.stringify(headcount).includes("はると（佐）"), "未提出園児は人数・園児名へ含めない");
 
     const row1605 = headcount.rows.find((row) => row.time === "16:05");
     assert.equal(row1605.counts[0], 0);
-    assert.deepEqual(firstDay.changes.find((change) => change.time === "16:05"), {
-      time: "16:05",
-      before: 1,
-      after: 0,
-      delta: -1,
-      byAgeGroup: { "0歳児": 0, "1歳児": 0, "2歳児": 0 },
-      childNames: [],
+    const change1605 = firstDay.changes.find((change) => change.time === "16:05");
+    assert.equal(change1605.before, 1);
+    assert.equal(change1605.after, 0);
+    assert.equal(change1605.requiredChildcareWorkers, 0);
+    assert.equal(change1605.requiredLicensedNurseryTeachers, 0);
+    assert.equal(firstDay.changes.find((change) => change.time === "15:05").totalChildren, 1);
+    const firstDay1605 = headcount.staffingChangePoints.find((point) => point.date === "2026-09-01" && point.time === "16:05");
+    assert.equal(firstDay1605.totalChildren, 0, "16:00降園は16:05から除外する");
+    const staffingRequirements = service.administratorStaffingRequirements(fixture.actorAdmin, {
+      submissionPeriodId: "period-2026-09",
     });
+    const staffingAt = (date, time) => staffingRequirements.slots.find((slot) => slot.date === date && slot.time === time);
+    assert.equal(staffingAt("2026-09-01", "16:00").totalChildren, 1);
+    assert.equal(staffingAt("2026-09-01", "16:00").requiredChildcareWorkers, 2);
+    assert.equal(staffingAt("2026-09-01", "16:05").totalChildren, 0);
+    assert.equal(staffingAt("2026-09-01", "16:05").requiredChildcareWorkers, 0);
+
+    const secondDay = headcount.days.find((day) => day.date === "2026-09-02");
+    const ageCompositionChange = secondDay.changes.find((change) => change.time === "10:00");
+    assert.equal(ageCompositionChange.before, 1);
+    assert.equal(ageCompositionChange.after, 1);
+    assert.deepEqual(ageCompositionChange.byAgeGroup, { "0歳児": 0, "1歳児": 0, "2歳児": 1 });
+    assert.equal(ageCompositionChange.delta, 0, "合計人数が同じでも年齢構成の変化を残す");
     const closureIndex = headcount.dates.findIndex((date) => date.date === "2026-09-21");
     assert.equal(headcount.days[closureIndex].status, "closed");
+    assert.equal(headcount.days[closureIndex].maximumRequiredChildcareWorkers, 0);
+    assert.equal(headcount.days[closureIndex].maximumRequiredLicensedNurseryTeachers, 0);
     assert.ok(headcount.rows.every((row) => row.counts[closureIndex] === 0));
+    assert.ok(staffingRequirements.slots
+      .filter((slot) => slot.date === "2026-09-21")
+      .every((slot) => slot.totalChildren === 0 && slot.requiredChildcareWorkers === 0));
 
     const adminDashboard = service.administratorScheduleDashboard(fixture.actorAdmin, {
       submissionPeriodId: "period-2026-09",
