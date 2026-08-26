@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
 import { createStaffScheduleService } from "../lib/server/staff-schedule/service.mjs";
+import { buildAutomaticScheduleDraft } from "../lib/server/staffing/automatic-draft.mjs";
 import {
   calculateConsecutiveWorkWarnings,
   calculateDailyScheduledWorkMinutes,
@@ -28,6 +29,66 @@ const fullWorkDay = () => [
   { startTime: "13:00", endTime: "17:00", activityType: "childcare" },
   { startTime: "17:00", endTime: "18:00", activityType: "administration" },
 ];
+
+function quarterHourRequirements(date, startTime, endTime, requiredChildcareWorkers, requiredLicensedNurseryTeachers) {
+  const toMinutes = (value) => {
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  const toTime = (value) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+  const result = [];
+  for (let minutes = toMinutes(startTime); minutes < toMinutes(endTime); minutes += 15) {
+    result.push({
+      date,
+      startTime: toTime(minutes),
+      endTime: toTime(minutes + 15),
+      requiredChildcareWorkers,
+      requiredLicensedNurseryTeachers,
+    });
+  }
+  return result;
+}
+
+function insertAutomaticStaff(database, administratorId, id, staffCode, qualification = "licensed_nursery_teacher") {
+  database.prepare(
+    "INSERT INTO staff_members (id, staff_code, name, employment_start_date, status) VALUES (?, ?, ?, '2026-01-01', 'active')",
+  ).run(id, staffCode, `架空 職員${id}`);
+  database.prepare(
+    "INSERT INTO staff_qualifications (id, staff_id, qualification_type, valid_from) VALUES (?, ?, ?, '2026-01-01')",
+  ).run(`qualification-${id}`, id, qualification);
+  database.prepare(
+    `INSERT INTO staff_work_condition_versions
+     (id, staff_id, valid_from, employment_type, created_by_administrator_id)
+     VALUES (?, ?, '2026-01-01', '常勤', ?)`,
+  ).run(`condition-${id}`, id, administratorId);
+  const insertAvailability = database.prepare(
+    `INSERT INTO staff_weekly_availability
+     (work_condition_version_id, weekday, available, start_time, end_time)
+     VALUES (?, ?, 1, '06:30', '20:30')`,
+  );
+  for (let weekday = 0; weekday <= 6; weekday += 1) {
+    insertAvailability.run(`condition-${id}`, weekday);
+  }
+}
+
+function stubAutomaticResult(targetMonth, staffId, overrides = {}) {
+  return {
+    targetMonth,
+    daysOffPlan: {
+      staffPlans: [{ staffId, finalPlannedDaysOff: [] }],
+      unresolvedConstraints: overrides.daysOffUnresolved ?? [],
+    },
+    scheduleSegments: overrides.scheduleSegments ?? [{
+      staffId,
+      date: `${targetMonth}-01`,
+      startTime: "09:00",
+      endTime: "10:00",
+      activityType: "childcare",
+    }],
+    shortages: overrides.shortages ?? [],
+    breakPlan: { unresolvedConstraints: overrides.breakUnresolved ?? [] },
+  };
+}
 
 function expectCode(run, code) {
   assert.throws(run, (error) => error instanceof StaffScheduleValidationError && error.code === code);
@@ -508,6 +569,229 @@ test("stores independent staff day-off and work-time preferences with effective 
     assert.equal(database.prepare(
       "SELECT COUNT(*) AS count FROM operation_logs WHERE target_type = 'staff_schedule_preference'",
     ).get().count, 5);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("converts automatic results while preserving paid leave and non-work other days", () => {
+  const targetMonth = "2026-09";
+  const staffProfiles = [{
+    id: "staff-a",
+    scheduledDays: [
+      { staffId: "staff-a", date: "2026-09-02", dayType: "paid_leave", segments: [] },
+      { staffId: "staff-a", date: "2026-09-03", dayType: "other", segments: [] },
+    ],
+  }];
+  const days = buildAutomaticScheduleDraft({
+    targetMonth,
+    staffProfiles,
+    generationResult: {
+      targetMonth,
+      daysOffPlan: {
+        staffPlans: [{ staffId: "staff-a", finalPlannedDaysOff: ["2026-09-04"] }],
+      },
+      scheduleSegments: [
+        { staffId: "staff-a", date: "2026-09-01", startTime: "09:00", endTime: "12:00", activityType: "childcare" },
+        { staffId: "staff-a", date: "2026-09-01", startTime: "12:00", endTime: "13:00", activityType: "break" },
+      ],
+    },
+  });
+  assert.deepEqual(days.map((day) => [day.date, day.dayType, day.segments.length]), [
+    ["2026-09-01", "work", 2],
+    ["2026-09-02", "paid_leave", 0],
+    ["2026-09-03", "other", 0],
+    ["2026-09-04", "day_off", 0],
+  ]);
+});
+
+test("creates one auto-generated draft transactionally and keeps it compatible with retrieval and confirmation", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-auto-draft-"));
+  const database = openDatabase(resolve(directory, "automatic-draft.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-auto", "automatic-admin", "架空 自動作成管理者");
+    for (const [id, code] of [["staff-a", "ST0001"], ["staff-b", "ST0002"], ["staff-c", "ST0003"], ["staff-d", "ST0004"]]) {
+      insertAutomaticStaff(database, "admin-auto", id, code);
+    }
+    const actor = { type: "administrator", id: "admin-auto", role: "normal", mustChangePassword: false };
+    const service = createStaffScheduleService({ database, now: () => new Date("2026-08-26T01:00:00.000Z") });
+    const result = service.createAutomaticMonthlyDraft(actor, {
+      targetMonth: "2026-09",
+      requirementSlots: quarterHourRequirements("2026-09-07", "09:00", "18:00", 3, 1),
+    });
+
+    assert.equal(result.schedule.month.status, "draft");
+    assert.equal(result.schedule.viewedVersion.source, "auto_generated");
+    assert.equal(result.schedule.viewedVersion.status, "draft");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count, 1);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM staff_schedule_days WHERE day_type = 'day_off'",
+    ).get().count > 0, true);
+    assert.equal(database.prepare(
+      `SELECT COUNT(*) AS count FROM staff_schedule_segments WHERE activity_type = 'childcare'`,
+    ).get().count > 0, true);
+    assert.equal(database.prepare(
+      `SELECT COUNT(*) AS count FROM staff_schedule_segments WHERE activity_type = 'break'`,
+    ).get().count > 0, true);
+    assert.equal(database.prepare(
+      `SELECT COUNT(*) AS count
+       FROM staff_schedule_segments s
+       JOIN staff_schedule_days d ON d.id = s.schedule_day_id
+       WHERE d.day_type <> 'work'`,
+    ).get().count, 0);
+
+    const loaded = service.scheduleDashboard(actor, {
+      targetMonth: "2026-09",
+      selectedDate: "2026-09-07",
+    });
+    assert.equal(loaded.viewedVersion.id, result.schedule.viewedVersion.id);
+    assert.equal(loaded.staff.some((staff) => staff.selectedDay?.segments.some((segment) => segment.activityType === "break")), true);
+    assert.equal(loaded.staff.reduce((total, staff) => total + staff.monthlyScheduledWorkMinutes, 0) > 0, true);
+
+    assert.throws(() => service.createAutomaticMonthlyDraft(actor, {
+      targetMonth: "2026-09",
+      requirementSlots: [],
+    }), (error) => error.code === "DRAFT_ALREADY_EXISTS");
+    const countsBeforeConfirmation = {
+      versions: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count,
+      days: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_days").get().count,
+      segments: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_segments").get().count,
+    };
+    service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-09",
+      versionId: result.schedule.viewedVersion.id,
+    });
+    assert.throws(() => service.createAutomaticMonthlyDraft(actor, {
+      targetMonth: "2026-09",
+      requirementSlots: [],
+    }), (error) => error.code === "CONFIRMED_SCHEDULE_EXISTS");
+    assert.deepEqual({
+      versions: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count,
+      days: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_days").get().count,
+      segments: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_segments").get().count,
+    }, countsBeforeConfirmation);
+    assert.equal(database.prepare("PRAGMA quick_check").get().quick_check, "ok");
+    assert.equal(database.prepare("PRAGMA foreign_key_check").all().length, 0);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM _schema_migrations WHERE name = '0009_exotic_skin.sql'",
+    ).get().count, 1);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("saves unresolved automatic results as a draft without persisting the unresolved metadata", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-auto-unresolved-"));
+  const database = openDatabase(resolve(directory, "automatic-unresolved.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-auto", "automatic-admin", "架空 自動作成管理者");
+    insertAutomaticStaff(database, "admin-auto", "staff-a", "ST0001");
+    database.prepare(
+      `INSERT INTO closure_days (id, date, name, type, parent_input_allowed)
+       VALUES ('closure-auto', '2026-10-03', '架空休園日', 'closed', 0),
+              ('cooperation-auto', '2026-10-04', '架空家庭保育協力日', 'family_cooperation', 1)`,
+    ).run();
+    const actor = { type: "administrator", id: "admin-auto", role: "normal", mustChangePassword: false };
+    const automaticShiftCalculator = ({ targetMonth, closureDates }) => {
+      assert.deepEqual(closureDates, ["2026-10-03"]);
+      return stubAutomaticResult(targetMonth, "staff-a", {
+        shortages: [{ date: `${targetMonth}-01`, startTime: "09:00", childcareWorkerShortage: 1 }],
+        daysOffUnresolved: [{ code: "DAY_OFF_TARGET_UNRESOLVED" }],
+        breakUnresolved: [{ code: "BREAK_COVERAGE_UNAVAILABLE" }],
+      });
+    };
+    const service = createStaffScheduleService({ database, automaticShiftCalculator });
+    const result = service.createAutomaticMonthlyDraft(actor, { targetMonth: "2026-10", requirementSlots: [] });
+    assert.equal(result.schedule.month.status, "draft");
+    assert.equal(result.unresolved.hasUnresolved, true);
+    assert.equal(result.unresolved.staffingShortages.length, 1);
+    assert.equal(result.unresolved.daysOff.length, 1);
+    assert.equal(result.unresolved.breaks.length, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_segments").get().count, 1);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects structurally invalid automatic results before saving and rolls back an insert failure", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-auto-rollback-"));
+  const database = openDatabase(resolve(directory, "automatic-rollback.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-auto", "automatic-admin", "架空 自動作成管理者");
+    insertAutomaticStaff(database, "admin-auto", "staff-a", "ST0001");
+    const actor = { type: "administrator", id: "admin-auto", role: "normal", mustChangePassword: false };
+    const overlapping = createStaffScheduleService({
+      database,
+      automaticShiftCalculator: ({ targetMonth }) => stubAutomaticResult(targetMonth, "staff-a", {
+        scheduleSegments: [
+          { staffId: "staff-a", date: `${targetMonth}-01`, startTime: "09:00", endTime: "12:00", activityType: "childcare" },
+          { staffId: "staff-a", date: `${targetMonth}-01`, startTime: "11:45", endTime: "12:15", activityType: "break" },
+        ],
+      }),
+    });
+    assert.throws(() => overlapping.createAutomaticMonthlyDraft(actor, {
+      targetMonth: "2026-11",
+      requirementSlots: [],
+    }), (error) => error.code === "TIME_RANGE_OVERLAP");
+
+    const invalidQuarterHour = createStaffScheduleService({
+      database,
+      automaticShiftCalculator: ({ targetMonth }) => stubAutomaticResult(targetMonth, "staff-a", {
+        scheduleSegments: [{
+          staffId: "staff-a",
+          date: `${targetMonth}-01`,
+          startTime: "09:05",
+          endTime: "10:00",
+          activityType: "childcare",
+        }],
+      }),
+    });
+    assert.throws(() => invalidQuarterHour.createAutomaticMonthlyDraft(actor, {
+      targetMonth: "2026-11",
+      requirementSlots: [],
+    }), (error) => error.code === "INVALID_TIME");
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count, 0);
+
+    database.exec(`
+      CREATE TEMP TRIGGER fail_auto_segment_for_test
+      BEFORE INSERT ON staff_schedule_segments
+      BEGIN
+        SELECT RAISE(ABORT, 'forced automatic segment failure');
+      END;
+    `);
+    const valid = createStaffScheduleService({
+      database,
+      automaticShiftCalculator: ({ targetMonth }) => stubAutomaticResult(targetMonth, "staff-a"),
+    });
+    assert.throws(() => valid.createAutomaticMonthlyDraft(actor, {
+      targetMonth: "2026-12",
+      requirementSlots: [],
+    }), /forced automatic segment failure/);
+    for (const table of [
+      "staff_schedule_months",
+      "staff_schedule_versions",
+      "staff_schedule_days",
+      "staff_schedule_segments",
+    ]) {
+      assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0);
+    }
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM operation_logs WHERE target_type = 'staff_schedule_month'",
+    ).get().count, 0);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
