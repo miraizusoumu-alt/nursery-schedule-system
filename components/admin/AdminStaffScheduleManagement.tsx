@@ -75,6 +75,19 @@ type AutomaticPreviewIssue = {
   requiredBreakMinutes?: number;
   childcareWorkerShortage?: number;
   licensedNurseryTeacherShortage?: number;
+  requiredChildcareWorkers?: number;
+  assignedChildcareWorkerCount?: number;
+  requiredLicensedNurseryTeachers?: number;
+  assignedLicensedNurseryTeacherCount?: number;
+  eligibleChildcareWorkerCandidateCount?: number;
+  eligibleLicensedNurseryTeacherCandidateCount?: number;
+  candidateStaffCount?: number;
+  exclusionReasons?: Array<{ code: string; label: string; count: number }>;
+  workStartTime?: string | null;
+  workEndTime?: string | null;
+  unresolvedReasonLabel?: string;
+  generalReliefUnavailable?: boolean;
+  qualifiedReliefUnavailable?: boolean;
 };
 type AutomaticPreviewDay = {
   staffId: string;
@@ -174,6 +187,49 @@ function issueLabel(issue: AutomaticPreviewIssue, kind: keyof AutomaticPreview["
   if (issue.code === "DAY_OFF_TARGET_UNRESOLVED") return `${staff}公休9日まであと${issue.shortageDays ?? 0}日を安全に割り当てられません`;
   if (issue.code === "DAY_OFF_PREFERENCE_REQUIRES_REVIEW") return `${staff}${when}: 公休に分類できない希望休があります`;
   return `${staff}${issue.message ?? "公休9日の計画に確認が必要です"}`;
+}
+
+function AutomaticIssueDetails({ issue, kind }: {
+  issue: AutomaticPreviewIssue;
+  kind: keyof AutomaticPreview["issues"];
+}) {
+  const isStaffingIssue = kind === "childcareStaffing" || kind === "licensedStaffing";
+  const isBreakIssue = kind === "breaks";
+
+  return <details className="automatic-preview-issue-detail">
+    <summary><span>{issueLabel(issue, kind)}</span><strong>理由を見る</strong></summary>
+    <div className="automatic-preview-issue-body">
+      {isStaffingIssue ? <>
+        <dl className="automatic-preview-issue-metrics">
+          <div><dt>必要保育従事者</dt><dd>{issue.requiredChildcareWorkers ?? 0}名</dd></div>
+          <div><dt>配置済み</dt><dd>{issue.assignedChildcareWorkerCount ?? 0}名</dd></div>
+          <div><dt>不足</dt><dd>{issue.childcareWorkerShortage ?? 0}名</dd></div>
+          <div><dt>必要保育士資格者</dt><dd>{issue.requiredLicensedNurseryTeachers ?? 0}名</dd></div>
+          <div><dt>配置済み資格者</dt><dd>{issue.assignedLicensedNurseryTeacherCount ?? 0}名</dd></div>
+          <div><dt>資格者不足</dt><dd>{issue.licensedNurseryTeacherShortage ?? 0}名</dd></div>
+          {kind === "licensedStaffing" ? <div><dt>有効な資格者候補</dt><dd>{issue.eligibleLicensedNurseryTeacherCandidateCount ?? 0}名</dd></div> : null}
+        </dl>
+        <div className="automatic-preview-exclusion-reasons">
+          <h5>配置できない主な理由</h5>
+          {issue.exclusionReasons?.length ? <ul>{issue.exclusionReasons.map((reason) => <li key={reason.code}><span>{reason.label}</span><strong>{reason.count}名</strong></li>)}</ul>
+            : <p>候補職員の除外理由はありません。</p>}
+          <p className="admin-schedule-note">1人に複数の理由がある場合は、それぞれに数えています。</p>
+        </div>
+      </> : null}
+      {isBreakIssue ? <>
+        <dl className="automatic-preview-issue-metrics">
+          <div><dt>勤務時間</dt><dd>{issue.workStartTime && issue.workEndTime ? `${issue.workStartTime}～${issue.workEndTime}` : "確認できません"}</dd></div>
+          <div><dt>必要休憩</dt><dd>{issue.requiredBreakMinutes ?? 0}分</dd></div>
+          <div><dt>未配置理由</dt><dd>{issue.unresolvedReasonLabel ?? "交代要員を確保できません"}</dd></div>
+        </dl>
+        <ul className="automatic-preview-break-reasons">
+          {issue.generalReliefUnavailable ? <li>一般の交代要員が不足しています。</li> : null}
+          {issue.qualifiedReliefUnavailable ? <li>保育士資格者の交代要員が不足しています。</li> : null}
+        </ul>
+      </> : null}
+      {!isStaffingIssue && !isBreakIssue ? <p>{issue.message ?? issueLabel(issue, kind)}</p> : null}
+    </div>
+  </details>;
 }
 
 export function AdminStaffScheduleManagement() {
@@ -344,7 +400,7 @@ export function AdminStaffScheduleManagement() {
         <div className="automatic-preview-issues" aria-label="自動作成の未解決事項">
           {!automaticPreview.hasUnresolved ? <p className="auth-message info">自動作成上の未解決事項はありません。</p> : previewIssueGroups.map(([kind, label, issues]) => issues.length ? <details key={kind}>
             <summary>{label}（{issues.length}件）</summary>
-            <ul>{issues.map((issue, index) => <li key={`${kind}-${index}`}>{issueLabel(issue, kind)}</li>)}</ul>
+            <ul className="automatic-preview-issue-list">{issues.map((issue, index) => <li key={`${kind}-${index}`}><AutomaticIssueDetails issue={issue} kind={kind} /></li>)}</ul>
           </details> : null)}
         </div>
         <div className="automatic-preview-days">

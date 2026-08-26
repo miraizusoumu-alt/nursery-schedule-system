@@ -6,7 +6,10 @@ import test from "node:test";
 import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
 import { hashOpaqueValue } from "../lib/server/auth/security.mjs";
 import { createStaffScheduleService } from "../lib/server/staff-schedule/service.mjs";
-import { buildAutomaticScheduleDraft } from "../lib/server/staffing/automatic-draft.mjs";
+import {
+  buildAutomaticScheduleDraft,
+  buildAutomaticSchedulePreview,
+} from "../lib/server/staffing/automatic-draft.mjs";
 import {
   calculateConsecutiveWorkWarnings,
   calculateDailyScheduledWorkMinutes,
@@ -612,6 +615,120 @@ test("converts automatic results while preserving paid leave and non-work other 
     ["2026-09-03", "other", 0],
     ["2026-09-04", "day_off", 0],
   ]);
+});
+
+test("explains staffing shortages and unplaced breaks from existing candidate evaluations", () => {
+  const candidate = (staffId, exclusionReasons, options = {}) => ({
+    staffId,
+    automaticPlacementEligible: false,
+    isLicensedNurseryTeacher: false,
+    existingScheduleDayType: null,
+    exclusionReasons,
+    ...options,
+  });
+  const slot = {
+    date: "2026-10-17",
+    startTime: "09:00",
+    endTime: "09:15",
+    requiredChildcareWorkers: 2,
+    assignedChildcareWorkerCount: 1,
+    childcareWorkerShortage: 1,
+    requiredLicensedNurseryTeachers: 1,
+    assignedLicensedNurseryTeacherCount: 0,
+    licensedNurseryTeacherShortage: 1,
+    assignedStaff: [{ staffId: "staff-working" }],
+    candidateEvaluations: [
+      candidate("staff-preference-day-off", ["PREFERENCE_DAY_OFF"]),
+      candidate("staff-outside-preference", ["OUTSIDE_PREFERENCE_TIME"]),
+      candidate("staff-day-off", ["EXISTING_NON_WORK_DAY"], { existingScheduleDayType: "day_off" }),
+      candidate("staff-paid-leave", ["EXISTING_NON_WORK_DAY"], { existingScheduleDayType: "paid_leave" }),
+      candidate("staff-other", ["EXISTING_NON_WORK_DAY"], { existingScheduleDayType: "other" }),
+      candidate("staff-weekday", ["WEEKDAY_NOT_AVAILABLE"]),
+      candidate("staff-consecutive", ["CONSECUTIVE_WORK_LIMIT"]),
+      candidate("staff-daily-limit", ["DAILY_WORK_LIMIT"], { isLicensedNurseryTeacher: true }),
+      candidate("staff-monthly-limit", ["MONTHLY_WORK_LIMIT"], { isLicensedNurseryTeacher: true }),
+      candidate("staff-support", [], { automaticPlacementEligible: true }),
+    ],
+  };
+  const generationResult = {
+    targetMonth: "2026-10",
+    placement: { slots: [slot] },
+    scheduleSegments: [{
+      staffId: "staff-working",
+      date: "2026-10-17",
+      startTime: "07:30",
+      endTime: "15:30",
+      activityType: "childcare",
+    }],
+    breakPlan: {
+      breakOutcomes: [{
+        staffId: "staff-working",
+        date: "2026-10-17",
+        requiredBreakMinutes: 45,
+        unresolvedReasonCode: "QUALIFIED_BREAK_COVERAGE_UNAVAILABLE",
+      }],
+    },
+  };
+  const preview = buildAutomaticSchedulePreview({
+    targetMonth: "2026-10",
+    days: [],
+    staffProfiles: [{ id: "staff-working", staffCode: "ST0001", name: "架空 職員" }],
+    requirementSource: {
+      period: { id: "period-2026-10", targetMonth: "2026-10", status: "open" },
+      slots: [slot],
+    },
+    unresolved: {
+      staffingShortages: [{
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        childcareWorkerShortage: 1,
+        licensedNurseryTeacherShortage: 1,
+      }],
+      daysOff: [],
+      breaks: [{
+        code: "QUALIFIED_BREAK_COVERAGE_UNAVAILABLE",
+        staffId: "staff-working",
+        date: "2026-10-17",
+        requiredBreakMinutes: 45,
+      }],
+    },
+    generationResult,
+  });
+
+  const childcare = preview.issues.childcareStaffing[0];
+  assert.deepEqual({
+    required: childcare.requiredChildcareWorkers,
+    assigned: childcare.assignedChildcareWorkerCount,
+    shortage: childcare.childcareWorkerShortage,
+  }, { required: 2, assigned: 1, shortage: 1 });
+  for (const code of [
+    "PREFERENCE_DAY_OFF",
+    "OUTSIDE_PREFERENCE_TIME",
+    "EXISTING_DAY_OFF",
+    "EXISTING_PAID_LEAVE",
+    "EXISTING_NON_WORK_OTHER",
+    "WEEKDAY_NOT_AVAILABLE",
+    "CONSECUTIVE_WORK_LIMIT",
+    "DAILY_WORK_LIMIT",
+    "MONTHLY_WORK_LIMIT",
+  ]) {
+    assert.equal(childcare.exclusionReasons.some((entry) => entry.code === code), true, code);
+  }
+  const licensed = preview.issues.licensedStaffing[0];
+  assert.equal(licensed.requiredLicensedNurseryTeachers, 1);
+  assert.equal(licensed.assignedLicensedNurseryTeacherCount, 0);
+  assert.equal(licensed.licensedNurseryTeacherShortage, 1);
+  assert.equal(licensed.eligibleLicensedNurseryTeacherCandidateCount, 0);
+  assert.equal(licensed.exclusionReasons.find((entry) => entry.code === "LICENSE_NOT_VALID").count, 8);
+  assert.equal(licensed.exclusionReasons.some((entry) => entry.label === "月間勤務時間の上限に達しています"), true);
+
+  const breakIssue = preview.issues.breaks[0];
+  assert.equal(breakIssue.staffName, "架空 職員");
+  assert.equal(breakIssue.workStartTime, "07:30");
+  assert.equal(breakIssue.workEndTime, "15:30");
+  assert.equal(breakIssue.qualifiedReliefUnavailable, true);
+  assert.equal(breakIssue.unresolvedReasonLabel, "保育士資格者の交代要員を確保できません");
 });
 
 test("creates one auto-generated draft transactionally and keeps it compatible with retrieval and confirmation", async () => {

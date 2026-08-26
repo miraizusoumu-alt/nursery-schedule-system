@@ -125,14 +125,14 @@
   min-width: 0;
 }
 
-.automatic-preview-issues details,
+.automatic-preview-issues > details,
 .automatic-preview-days > details {
   min-width: 0;
   border-top: 1px solid var(--line);
   padding-top: 12px;
 }
 
-.automatic-preview-issues summary,
+.automatic-preview-issues > details > summary,
 .automatic-preview-days > details > summary {
   cursor: pointer;
   color: var(--foreground);
@@ -152,12 +152,113 @@
   font-size: 0.82rem;
 }
 
-.automatic-preview-issues ul {
+.automatic-preview-issue-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automatic-preview-issue-detail {
+  min-width: 0;
+  border-left: 3px solid var(--warning);
+  padding: 7px 0 7px 10px;
+}
+
+.automatic-preview-issue-detail > summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  cursor: pointer;
+  color: var(--warning);
+  font-weight: 800;
+}
+
+.automatic-preview-issue-detail > summary span {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.automatic-preview-issue-detail > summary strong {
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+}
+
+.automatic-preview-issue-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0 4px;
+  color: var(--foreground);
+}
+
+.automatic-preview-issue-body > p {
+  margin: 0;
+}
+
+.automatic-preview-issue-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.automatic-preview-issue-metrics > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 0 7px;
+}
+
+.automatic-preview-issue-metrics dt {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.automatic-preview-issue-metrics dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
+}
+
+.automatic-preview-exclusion-reasons {
+  display: grid;
+  gap: 8px;
+}
+
+.automatic-preview-exclusion-reasons h5 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.automatic-preview-exclusion-reasons ul,
+.automatic-preview-break-reasons {
   display: grid;
   gap: 6px;
-  margin: 10px 0 0;
-  padding-left: 22px;
-  color: var(--warning);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automatic-preview-exclusion-reasons li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 5px;
+  font-size: 0.84rem;
+}
+
+.automatic-preview-break-reasons li {
+  border-left: 3px solid var(--warning);
+  padding-left: 9px;
+  font-size: 0.84rem;
   font-weight: 700;
 }
 
@@ -362,7 +463,8 @@
   }
 
   .automatic-preview-days > details > div,
-  .automatic-preview-days dl {
+  .automatic-preview-days dl,
+  .automatic-preview-issue-metrics {
     grid-template-columns: minmax(0, 1fr);
   }
 
