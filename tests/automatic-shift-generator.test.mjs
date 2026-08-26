@@ -161,6 +161,13 @@ test("allows a sixth work day but excludes seventh days and existing non-work da
   const protectedResult = calculateAutomaticChildcareShift([requirement("09:00", 1)], [publicDayOff]).slots[0];
   assert.equal(protectedResult.assignedChildcareWorkerCount, 0);
   assert.ok(protectedResult.candidateEvaluations[0].exclusionReasons.includes("EXISTING_NON_WORK_DAY"));
+
+  const otherNonWork = staff("A", {
+    scheduledDays: [{ staffId: "A", date: "2026-09-07", dayType: "other", segments: [] }],
+  });
+  const otherResult = calculateAutomaticChildcareShift([requirement("09:00", 1)], [otherNonWork]).slots[0];
+  assert.equal(otherResult.assignedChildcareWorkerCount, 0);
+  assert.ok(otherResult.candidateEvaluations[0].exclusionReasons.includes("EXISTING_NON_WORK_DAY"));
 });
 
 test("keeps adjacent assignments deterministic without unnecessary staff changes", () => {
