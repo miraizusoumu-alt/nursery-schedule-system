@@ -3,6 +3,10 @@ import test from "node:test";
 import { planAutomaticBreaks } from "../lib/server/staffing/automatic-break-planner.mjs";
 import { calculateIntegratedMonthlyAutomaticShift } from "../lib/server/staffing/integrated-monthly-shift-generator.mjs";
 import { evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot } from "../lib/server/staffing/staff-eligibility.mjs";
+import {
+  resolveDailyBreakRequirements,
+  resolveRequiredBreakMinutes,
+} from "../lib/server/staffing/break-requirements.mjs";
 import { calculateDailyScheduledWorkMinutes } from "../lib/server/staffing/scheduled-work.mjs";
 
 function addMinutes(time, amount) {
@@ -108,6 +112,39 @@ test("does not create a break when no break is required", () => {
   assert.deepEqual(result.breakSegments, []);
   assert.equal(result.breakOutcomes[0].placementStatus, "not_required");
   assert.equal(result.breakOutcomes[0].placementSucceeded, true);
+});
+
+test("resolves statutory minimum break minutes at exact work-time boundaries", () => {
+  assert.equal(resolveRequiredBreakMinutes(0), 0);
+  assert.equal(resolveRequiredBreakMinutes(360), 0);
+  assert.equal(resolveRequiredBreakMinutes(361), 45);
+  assert.equal(resolveRequiredBreakMinutes(480), 45);
+  assert.equal(resolveRequiredBreakMinutes(481), 60);
+});
+
+test("derives daily break requirements from scheduled work without counting break segments", () => {
+  const requirements = resolveDailyBreakRequirements([
+    {
+      staffId: "A",
+      date: "2026-09-07",
+      startTime: "09:00",
+      endTime: "15:15",
+      activityType: "childcare",
+    },
+    {
+      staffId: "A",
+      date: "2026-09-07",
+      startTime: "15:15",
+      endTime: "16:15",
+      activityType: "break",
+    },
+  ]);
+  assert.deepEqual(requirements, [{
+    staffId: "A",
+    date: "2026-09-07",
+    scheduledWorkMinutes: 375,
+    requiredBreakMinutes: 45,
+  }]);
 });
 
 test("places a continuous 60-minute break with one stable relief worker and updates work minutes", () => {
@@ -342,12 +379,11 @@ test("integrates break planning into the monthly engine and remains deterministi
     staff("B", { staffCode: "ST0002", scheduledDays: [scheduleDay("B", date)] }),
     staff("C", { staffCode: "ST0003", scheduledDays: [scheduleDay("C", date)] }),
   ];
-  const slots = requirements("11:00", "14:00", { date });
+  const slots = requirements("09:00", "17:15", { date, requiredChildcareWorkers: 1 });
   const input = {
     targetMonth: "2026-09",
     requirementSlots: slots,
     staffProfiles: profiles,
-    breakRequirements: [{ staffId: "A", date, requiredBreakMinutes: 60 }],
   };
   const first = calculateIntegratedMonthlyAutomaticShift(input);
   const second = calculateIntegratedMonthlyAutomaticShift({
@@ -357,6 +393,54 @@ test("integrates break planning into the monthly engine and remains deterministi
   });
   assert.deepEqual(first, second);
   assert.equal(first.breakPlan.breakOutcomes[0].placementSucceeded, true);
+  assert.equal(first.breakPlan.breakOutcomes[0].requiredBreakMinutes, 60);
   assert.equal(first.breakSegments.length, 1);
   assert.equal(first.shortages.length, 0);
+});
+
+test("uses a sufficient existing break without generating an additional break", () => {
+  const date = "2026-09-21";
+  const existingBreak = { startTime: "12:00", endTime: "13:00", activityType: "break" };
+  const profiles = [
+    staff("A", {
+      staffCode: "ST0001",
+      scheduledDays: [scheduleDay("A", date, "work", [existingBreak])],
+    }),
+    staff("B", { staffCode: "ST0002", scheduledDays: [scheduleDay("B", date)] }),
+  ];
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots: requirements("09:00", "17:15", { date, requiredChildcareWorkers: 1 }),
+    staffProfiles: profiles,
+  });
+  const outcome = result.breakPlan.breakOutcomes.find((entry) => entry.staffId === "A");
+  assert.equal(outcome.requiredBreakMinutes, 60);
+  assert.equal(outcome.placementStatus, "preserved_existing");
+  assert.equal(outcome.breakStartTime, "12:00");
+  assert.equal(outcome.breakEndTime, "13:00");
+  assert.equal(result.breakSegments.filter((segment) => segment.staffId === "A").length, 1);
+  assert.equal(result.breakSegments.find((segment) => segment.staffId === "A").source, "existing");
+});
+
+test("leaves an insufficient existing break unresolved without generating a split remainder", () => {
+  const date = "2026-09-22";
+  const existingBreak = { startTime: "12:00", endTime: "12:45", activityType: "break" };
+  const profiles = [
+    staff("A", {
+      staffCode: "ST0001",
+      scheduledDays: [scheduleDay("A", date, "work", [existingBreak])],
+    }),
+    staff("B", { staffCode: "ST0002", scheduledDays: [scheduleDay("B", date)] }),
+  ];
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots: requirements("09:00", "17:15", { date, requiredChildcareWorkers: 1 }),
+    staffProfiles: profiles,
+  });
+  const outcome = result.breakPlan.breakOutcomes.find((entry) => entry.staffId === "A");
+  assert.equal(outcome.requiredBreakMinutes, 60);
+  assert.equal(outcome.placementSucceeded, false);
+  assert.equal(outcome.unresolvedReasonCode, "CONTIGUOUS_BREAK_UNAVAILABLE");
+  assert.equal(result.breakSegments.filter((segment) => segment.staffId === "A").length, 1);
+  assert.equal(result.breakSegments.find((segment) => segment.staffId === "A").source, "existing");
 });
