@@ -2458,6 +2458,29 @@ test("aggregates the effective monthly schedule with fiscal-age groups and priva
     const quarterHourCandidates = service.administratorQuarterHourStaffingCandidates(fixture.actorAdmin, {
       submissionPeriodId: "period-2026-09",
     });
+    const automaticShiftRequirements = service.administratorQuarterHourStaffingRequirements(fixture.actorAdmin, {
+      targetMonth: "2026-09",
+    });
+    assert.equal(automaticShiftRequirements.period.id, "period-2026-09");
+    assert.equal(automaticShiftRequirements.slots.length, quarterHourCandidates.slots.length);
+    assert.deepEqual(
+      automaticShiftRequirements.slots.map((slot) => [
+        slot.date,
+        slot.startTime,
+        slot.requiredChildcareWorkers,
+        slot.requiredLicensedNurseryTeachers,
+      ]),
+      quarterHourCandidates.slots.map((slot) => [
+        slot.date,
+        slot.startTime,
+        slot.requiredChildcareWorkers,
+        slot.requiredLicensedNurseryTeachers,
+      ]),
+    );
+    assert.throws(
+      () => service.administratorQuarterHourStaffingRequirements(fixture.actorAdmin, { targetMonth: "2098-01" }),
+      (error) => error.code === "AUTOMATIC_SHIFT_PERIOD_NOT_FOUND",
+    );
     assert.throws(
       () => service.administratorQuarterHourStaffingCandidates(fixture.actorA, {
         submissionPeriodId: "period-2026-09",

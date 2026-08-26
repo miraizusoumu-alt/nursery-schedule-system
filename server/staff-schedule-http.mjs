@@ -20,6 +20,12 @@ export async function handleStaffScheduleApiRequest(request, { service, authServ
 
     if (request.method !== "GET" && request.method !== "HEAD") assertCsrf(request, session);
     const body = await readJson(request);
+    if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules/automatic-preview") {
+      return json({ ok: true, preview: service.previewAutomaticMonthlyDraft(session.actor, body) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules/automatic-draft") {
+      return json({ ok: true, ...service.createAutomaticMonthlyDraft(session.actor, body) }, 201);
+    }
     if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules") {
       return json({ ok: true, schedule: service.createMonthlySchedule(session.actor, body) }, 201);
     }

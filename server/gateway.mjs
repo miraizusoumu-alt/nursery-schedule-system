@@ -122,7 +122,12 @@ export async function createGateway({
   const service = createAuthService({ database });
   const familyScheduleService = createFamilyScheduleService({ database });
   const staffManagementService = createStaffManagementService({ database });
-  const staffScheduleService = createStaffScheduleService({ database });
+  const staffScheduleService = createStaffScheduleService({
+    database,
+    automaticRequirementSlotsProvider: (actor, input) => {
+      return familyScheduleService.administratorQuarterHourStaffingRequirements(actor, input);
+    },
+  });
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {

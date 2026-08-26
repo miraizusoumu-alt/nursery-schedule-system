@@ -62,6 +62,43 @@ type StaffSchedule = {
   availableMonths: Array<{ targetMonth: string; status: "draft" | "confirmed"; confirmedAt: string | null }>;
   staff: StaffSummary[];
 };
+type AutomaticPreviewIssue = {
+  code?: string;
+  staffId?: string;
+  staffCode?: string;
+  staffName?: string;
+  message?: string;
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  shortageDays?: number;
+  requiredBreakMinutes?: number;
+  childcareWorkerShortage?: number;
+  licensedNurseryTeacherShortage?: number;
+};
+type AutomaticPreviewDay = {
+  staffId: string;
+  staffCode: string;
+  staffName: string;
+  date: string;
+  dayType: DayType;
+  segments: Segment[];
+  scheduledWorkMinutes: number;
+};
+type AutomaticPreview = {
+  targetMonth: string;
+  sourcePeriod: { id: string; targetMonth: string; status: string };
+  requirementSlotCount: number;
+  days: AutomaticPreviewDay[];
+  issues: {
+    childcareStaffing: AutomaticPreviewIssue[];
+    licensedStaffing: AutomaticPreviewIssue[];
+    daysOff: AutomaticPreviewIssue[];
+    consecutiveWork: AutomaticPreviewIssue[];
+    breaks: AutomaticPreviewIssue[];
+  };
+  hasUnresolved: boolean;
+};
 
 const dayTypeLabels: Record<DayType, string> = {
   work: "勤務",
@@ -121,6 +158,24 @@ function formatMinutes(value: number) {
   return `${sign}${Math.floor(absolute / 60)}時間${String(absolute % 60).padStart(2, "0")}分`;
 }
 
+function automaticDayWindow(day: AutomaticPreviewDay) {
+  if (day.dayType !== "work" || !day.segments.length) return dayTypeLabels[day.dayType];
+  return `${day.segments[0].startTime}～${day.segments.at(-1)?.endTime}`;
+}
+
+function issueLabel(issue: AutomaticPreviewIssue, kind: keyof AutomaticPreview["issues"]) {
+  const staff = issue.staffName ? `${issue.staffName}${issue.staffCode ? `（${issue.staffCode}）` : ""}: ` : "";
+  const time = issue.startTime ? issue.endTime ? ` ${issue.startTime}～${issue.endTime}` : ` ${issue.startTime}` : "";
+  const when = issue.date ? `${formatDate(issue.date)}${time}` : "対象月内";
+  if (kind === "childcareStaffing") return `${when}: 保育従事者が${issue.childcareWorkerShortage ?? 0}人不足`;
+  if (kind === "licensedStaffing") return `${when}: 保育士資格者が${issue.licensedNurseryTeacherShortage ?? 0}人不足`;
+  if (kind === "consecutiveWork") return `${staff}${when}: 最大6連勤の条件を満たせません`;
+  if (kind === "breaks") return `${staff}${when}: ${issue.requiredBreakMinutes ? `${issue.requiredBreakMinutes}分の` : "必要な"}休憩を配置できません`;
+  if (issue.code === "DAY_OFF_TARGET_UNRESOLVED") return `${staff}公休9日まであと${issue.shortageDays ?? 0}日を安全に割り当てられません`;
+  if (issue.code === "DAY_OFF_PREFERENCE_REQUIRES_REVIEW") return `${staff}${when}: 公休に分類できない希望休があります`;
+  return `${staff}${issue.message ?? "公休9日の計画に確認が必要です"}`;
+}
+
 export function AdminStaffScheduleManagement() {
   const initialMonth = currentTargetMonth();
   const [schedule, setSchedule] = useState<StaffSchedule | null>(null);
@@ -135,12 +190,14 @@ export function AdminStaffScheduleManagement() {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [automaticPreview, setAutomaticPreview] = useState<AutomaticPreview | null>(null);
 
   const load = useCallback(async (month: string, date = `${month}-01`, versionId = "") => {
     const query = new URLSearchParams({ targetMonth: month, selectedDate: date });
     if (versionId) query.set("versionId", versionId);
     const result = await api<{ schedule: StaffSchedule }>(`/api/admin/staff-schedules?${query}`);
     setSchedule(result.schedule);
+    setAutomaticPreview(null);
     setTargetMonth(month);
     setSelectedDate(result.schedule.selectedDate);
     setSelectedStaffId((current) => result.schedule.staff.some((staff) => staff.id === current)
@@ -201,6 +258,22 @@ export function AdminStaffScheduleManagement() {
     return Array.from({ length: dayCount }, (_, index) => `${targetMonth}-${String(index + 1).padStart(2, "0")}`);
   }, [schedule, targetMonth]);
   const readOnly = !schedule?.viewedVersion || schedule.viewedVersion.readOnly;
+  const previewDates = useMemo(() => {
+    const grouped = new Map<string, AutomaticPreviewDay[]>();
+    for (const day of automaticPreview?.days ?? []) {
+      const entries = grouped.get(day.date) ?? [];
+      entries.push(day);
+      grouped.set(day.date, entries);
+    }
+    return [...grouped.entries()];
+  }, [automaticPreview]);
+  const previewIssueGroups = automaticPreview ? [
+    ["childcareStaffing", "保育従事者不足", automaticPreview.issues.childcareStaffing],
+    ["licensedStaffing", "保育士資格者不足", automaticPreview.issues.licensedStaffing],
+    ["daysOff", "公休計画", automaticPreview.issues.daysOff],
+    ["consecutiveWork", "連勤条件", automaticPreview.issues.consecutiveWork],
+    ["breaks", "休憩未配置", automaticPreview.issues.breaks],
+  ] as const : [];
 
   return (
     <div className="admin-area-content staff-schedule-management">
@@ -229,6 +302,14 @@ export function AdminStaffScheduleManagement() {
             setSelectedStaffId(result.schedule.staff[0]?.id ?? "");
             setMessage(`${formatMonth(targetMonth)}のシフトを作成しました。`);
           })}>この月のシフトを作成</button> : null}
+          {!schedule?.month ? <button type="button" disabled={busy !== ""} onClick={() => void run("automatic-preview", async () => {
+            const result = await api<{ preview: AutomaticPreview }>("/api/admin/staff-schedules/automatic-preview", {
+              method: "POST",
+              body: { targetMonth },
+            });
+            setAutomaticPreview(result.preview);
+            setMessage(`${formatMonth(targetMonth)}の自動シフト案を計算しました。まだ保存されていません。`);
+          })}>{busy === "automatic-preview" ? "計算中..." : "自動シフトをプレビュー"}</button> : null}
           {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" ? <button type="button" className="primary" disabled={busy !== ""} onClick={() => {
             if (!window.confirm(`${formatMonth(targetMonth)}のシフトを確定しますか？`)) return;
             void run("confirm", async () => {
@@ -250,7 +331,50 @@ export function AdminStaffScheduleManagement() {
           <summary>過去の確定内容を確認</summary>
           <div>{schedule.versions.map((version) => <button key={version.id} type="button" className={schedule.viewedVersion?.id === version.id ? "active" : ""} disabled={busy !== ""} onClick={() => void run("history", async () => { await load(targetMonth, selectedDate, version.id); })}>{version.status === "confirmed" ? `確定済み ${version.confirmedAt ? new Date(version.confirmedAt).toLocaleDateString("ja-JP") : ""}` : "作成中"}</button>)}</div>
         </details> : null}
+        {schedule?.month?.status === "draft" ? <p className="auth-message info">すでに作成中のシフトがあります。自動作成では上書きしません。</p> : null}
+        {schedule?.month?.status === "confirmed" ? <p className="auth-message info">確定済みのシフトがあります。自動作成では変更しません。</p> : null}
       </section>
+
+      {automaticPreview && !schedule?.month ? <section className="auth-section automatic-shift-preview">
+        <div className="auth-section-heading">
+          <div><span>{formatMonth(automaticPreview.targetMonth)} / 保存前</span><h3>自動シフト案</h3></div>
+          <span className={`admin-state ${automaticPreview.hasUnresolved ? "warning" : "confirmed"}`}>{automaticPreview.hasUnresolved ? "要確認" : "確認事項なし"}</span>
+        </div>
+        <p className="admin-schedule-note">園児の採用中の利用予定から15分単位の必要人数を計算しています。内容を確認してから下書きを作成してください。</p>
+        <div className="automatic-preview-issues" aria-label="自動作成の未解決事項">
+          {!automaticPreview.hasUnresolved ? <p className="auth-message info">自動作成上の未解決事項はありません。</p> : previewIssueGroups.map(([kind, label, issues]) => issues.length ? <details key={kind}>
+            <summary>{label}（{issues.length}件）</summary>
+            <ul>{issues.map((issue, index) => <li key={`${kind}-${index}`}>{issueLabel(issue, kind)}</li>)}</ul>
+          </details> : null)}
+        </div>
+        <div className="automatic-preview-days">
+          {previewDates.map(([date, days], index) => <details key={date} open={index === 0}>
+            <summary><strong>{formatDate(date)}</strong><span>{days.length}名の予定</span></summary>
+            <div>{days.map((day) => <article key={`${day.staffId}:${day.date}`}>
+              <div><strong>{day.staffName}</strong><span>{day.staffCode}</span></div>
+              <dl><div><dt>状態・時間</dt><dd>{automaticDayWindow(day)}</dd></div><div><dt>予定実労働</dt><dd>{formatMinutes(day.scheduledWorkMinutes)}</dd></div></dl>
+              {day.segments.length ? <ul>{day.segments.map((segment, segmentIndex) => <li key={`${segment.startTime}:${segmentIndex}`}><span>{activityLabels[segment.activityType]}</span><strong>{segment.startTime}～{segment.endTime}</strong></li>)}</ul> : null}
+            </article>)}</div>
+          </details>)}
+          {!previewDates.length ? <p className="admin-schedule-note">表示できる勤務・公休予定がありません。</p> : null}
+        </div>
+        <div className="automatic-preview-actions">
+          <p>保存時には最新の利用予定・職員条件で再計算します。</p>
+          <button type="button" className="primary" disabled={busy !== ""} onClick={() => {
+            if (!window.confirm("表示中の案を確認しました。最新条件で再計算して、作成中のシフトとして保存しますか？")) return;
+            void run("automatic-draft", async () => {
+              const result = await api<{ schedule: StaffSchedule }>("/api/admin/staff-schedules/automatic-draft", {
+                method: "POST",
+                body: { targetMonth },
+              });
+              setAutomaticPreview(null);
+              setSchedule(result.schedule);
+              setSelectedStaffId(result.schedule.staff[0]?.id ?? "");
+              setMessage(`${formatMonth(targetMonth)}の自動シフト案を作成中のシフトとして保存しました。`);
+            });
+          }}>{busy === "automatic-draft" ? "下書き作成中..." : "この内容で下書きを作成"}</button>
+        </div>
+      </section> : null}
 
       {schedule ? <section className="auth-section">
         <div className="auth-section-heading"><div><span>{formatMonth(targetMonth)}</span><h3>職員と日付を選択</h3></div></div>

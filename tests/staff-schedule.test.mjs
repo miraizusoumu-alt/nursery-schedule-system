@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { applyMigrations, openDatabase } from "../db/sqlite.mjs";
+import { hashOpaqueValue } from "../lib/server/auth/security.mjs";
 import { createStaffScheduleService } from "../lib/server/staff-schedule/service.mjs";
 import { buildAutomaticScheduleDraft } from "../lib/server/staffing/automatic-draft.mjs";
 import {
@@ -88,6 +89,13 @@ function stubAutomaticResult(targetMonth, staffId, overrides = {}) {
     shortages: overrides.shortages ?? [],
     breakPlan: { unresolvedConstraints: overrides.breakUnresolved ?? [] },
   };
+}
+
+function automaticRequirementSlotsProvider(slotsOrFactory = []) {
+  return (_actor, { targetMonth }) => ({
+    period: { id: `period-${targetMonth}`, targetMonth, status: "open" },
+    slots: typeof slotsOrFactory === "function" ? slotsOrFactory(targetMonth) : slotsOrFactory,
+  });
 }
 
 function expectCode(run, code) {
@@ -618,11 +626,31 @@ test("creates one auto-generated draft transactionally and keeps it compatible w
       insertAutomaticStaff(database, "admin-auto", id, code);
     }
     const actor = { type: "administrator", id: "admin-auto", role: "normal", mustChangePassword: false };
-    const service = createStaffScheduleService({ database, now: () => new Date("2026-08-26T01:00:00.000Z") });
-    const result = service.createAutomaticMonthlyDraft(actor, {
-      targetMonth: "2026-09",
-      requirementSlots: quarterHourRequirements("2026-09-07", "09:00", "18:00", 3, 1),
+    const requirements = quarterHourRequirements("2026-09-07", "09:00", "18:00", 3, 1);
+    let requirementLoadCount = 0;
+    const service = createStaffScheduleService({
+      database,
+      now: () => new Date("2026-08-26T01:00:00.000Z"),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider((targetMonth) => {
+        requirementLoadCount += 1;
+        return targetMonth === "2026-09" ? requirements : [];
+      }),
     });
+
+    const preview = service.previewAutomaticMonthlyDraft(actor, { targetMonth: "2026-09" });
+    assert.equal(preview.sourcePeriod.id, "period-2026-09");
+    assert.equal(preview.requirementSlotCount, requirements.length);
+    assert.equal(preview.days.some((day) => day.dayType === "day_off"), true);
+    assert.equal(preview.days.some((day) => day.segments.some((segment) => segment.activityType === "childcare")), true);
+    assert.equal(preview.days.some((day) => day.segments.some((segment) => segment.activityType === "break")), true);
+    assert.equal(preview.days.some((day) => day.scheduledWorkMinutes > 0), true);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count, 0);
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM operation_logs WHERE target_type = 'staff_schedule_month'",
+    ).get().count, 0);
+
+    const result = service.createAutomaticMonthlyDraft(actor, { targetMonth: "2026-09" });
+    assert.equal(requirementLoadCount, 2, "preview and save each load the latest server-side requirements");
 
     assert.equal(result.schedule.month.status, "draft");
     assert.equal(result.schedule.viewedVersion.source, "auto_generated");
@@ -655,7 +683,6 @@ test("creates one auto-generated draft transactionally and keeps it compatible w
 
     assert.throws(() => service.createAutomaticMonthlyDraft(actor, {
       targetMonth: "2026-09",
-      requirementSlots: [],
     }), (error) => error.code === "DRAFT_ALREADY_EXISTS");
     const countsBeforeConfirmation = {
       versions: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count,
@@ -668,7 +695,6 @@ test("creates one auto-generated draft transactionally and keeps it compatible w
     });
     assert.throws(() => service.createAutomaticMonthlyDraft(actor, {
       targetMonth: "2026-09",
-      requirementSlots: [],
     }), (error) => error.code === "CONFIRMED_SCHEDULE_EXISTS");
     assert.deepEqual({
       versions: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count,
@@ -680,6 +706,14 @@ test("creates one auto-generated draft transactionally and keeps it compatible w
     assert.equal(database.prepare(
       "SELECT COUNT(*) AS count FROM _schema_migrations WHERE name = '0009_exotic_skin.sql'",
     ).get().count, 1);
+
+    service.previewAutomaticMonthlyDraft(actor, { targetMonth: "2026-10" });
+    service.createMonthlySchedule(actor, { targetMonth: "2026-10" });
+    assert.throws(
+      () => service.createAutomaticMonthlyDraft(actor, { targetMonth: "2026-10" }),
+      (error) => error.code === "DRAFT_ALREADY_EXISTS",
+      "save rechecks a conflict created after preview",
+    );
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
@@ -704,17 +738,35 @@ test("saves unresolved automatic results as a draft without persisting the unres
     const automaticShiftCalculator = ({ targetMonth, closureDates }) => {
       assert.deepEqual(closureDates, ["2026-10-03"]);
       return stubAutomaticResult(targetMonth, "staff-a", {
-        shortages: [{ date: `${targetMonth}-01`, startTime: "09:00", childcareWorkerShortage: 1 }],
-        daysOffUnresolved: [{ code: "DAY_OFF_TARGET_UNRESOLVED" }],
+        shortages: [
+          { date: `${targetMonth}-01`, startTime: "09:00", endTime: "09:15", childcareWorkerShortage: 1 },
+          { date: `${targetMonth}-01`, startTime: "09:15", endTime: "09:30", childcareWorkerShortage: 1 },
+        ],
+        daysOffUnresolved: [
+          { code: "DAY_OFF_TARGET_UNRESOLVED", staffId: "staff-a", shortageDays: 1 },
+          { code: "CHILDCARE_STAFF_SHORTAGE_AFTER_DAY_OFF_PLAN", date: `${targetMonth}-01`, startTime: "09:00", shortage: 1 },
+        ],
         breakUnresolved: [{ code: "BREAK_COVERAGE_UNAVAILABLE" }],
       });
     };
-    const service = createStaffScheduleService({ database, automaticShiftCalculator });
-    const result = service.createAutomaticMonthlyDraft(actor, { targetMonth: "2026-10", requirementSlots: [] });
+    const service = createStaffScheduleService({
+      database,
+      automaticShiftCalculator,
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider(),
+    });
+    const preview = service.previewAutomaticMonthlyDraft(actor, { targetMonth: "2026-10" });
+    assert.equal(preview.hasUnresolved, true);
+    assert.equal(preview.issues.childcareStaffing.length, 1);
+    assert.equal(preview.issues.childcareStaffing[0].endTime, "09:30");
+    assert.equal(preview.issues.daysOff.length, 1);
+    assert.equal(preview.issues.daysOff[0].staffName, "架空 職員staff-a");
+    assert.equal(preview.issues.breaks.length, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count, 0);
+    const result = service.createAutomaticMonthlyDraft(actor, { targetMonth: "2026-10" });
     assert.equal(result.schedule.month.status, "draft");
     assert.equal(result.unresolved.hasUnresolved, true);
-    assert.equal(result.unresolved.staffingShortages.length, 1);
-    assert.equal(result.unresolved.daysOff.length, 1);
+    assert.equal(result.unresolved.staffingShortages.length, 2);
+    assert.equal(result.unresolved.daysOff.length, 2);
     assert.equal(result.unresolved.breaks.length, 1);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count, 1);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_segments").get().count, 1);
@@ -742,6 +794,7 @@ test("rejects structurally invalid automatic results before saving and rolls bac
           { staffId: "staff-a", date: `${targetMonth}-01`, startTime: "11:45", endTime: "12:15", activityType: "break" },
         ],
       }),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider(),
     });
     assert.throws(() => overlapping.createAutomaticMonthlyDraft(actor, {
       targetMonth: "2026-11",
@@ -759,6 +812,7 @@ test("rejects structurally invalid automatic results before saving and rolls bac
           activityType: "childcare",
         }],
       }),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider(),
     });
     assert.throws(() => invalidQuarterHour.createAutomaticMonthlyDraft(actor, {
       targetMonth: "2026-11",
@@ -776,6 +830,7 @@ test("rejects structurally invalid automatic results before saving and rolls bac
     const valid = createStaffScheduleService({
       database,
       automaticShiftCalculator: ({ targetMonth }) => stubAutomaticResult(targetMonth, "staff-a"),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider(),
     });
     assert.throws(() => valid.createAutomaticMonthlyDraft(actor, {
       targetMonth: "2026-12",
@@ -796,4 +851,56 @@ test("rejects structurally invalid automatic results before saving and rolls bac
     database.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("connects administrator-only automatic preview and explicit draft APIs", async () => {
+  const csrfToken = "automatic-preview-csrf-token";
+  const actor = { type: "administrator", id: "admin-auto", role: "normal", mustChangePassword: false };
+  const session = { actor, csrfTokenHash: hashOpaqueValue(csrfToken) };
+  const authService = {
+    sessionByToken: (token) => token === "admin-session" ? session : null,
+  };
+  const calls = [];
+  const service = {
+    previewAutomaticMonthlyDraft(receivedActor, body) {
+      calls.push(["preview", receivedActor.id, body.targetMonth]);
+      return { targetMonth: body.targetMonth, days: [], issues: {}, hasUnresolved: false };
+    },
+    createAutomaticMonthlyDraft(receivedActor, body) {
+      calls.push(["draft", receivedActor.id, body.targetMonth]);
+      return { schedule: { targetMonth: body.targetMonth }, unresolved: { hasUnresolved: false } };
+    },
+  };
+  const request = (path) => new Request(`http://localhost${path}`, {
+    method: "POST",
+    headers: {
+      origin: "http://localhost",
+      cookie: `nursery_session=admin-session; nursery_csrf=${csrfToken}`,
+      "content-type": "application/json",
+      "x-csrf-token": csrfToken,
+    },
+    body: JSON.stringify({ targetMonth: "2026-09", requirementSlots: [{ untrusted: true }] }),
+  });
+
+  const previewResponse = await handleStaffScheduleApiRequest(
+    request("/api/admin/staff-schedules/automatic-preview"),
+    { service, authService },
+  );
+  assert.equal(previewResponse.status, 200);
+  assert.equal((await previewResponse.json()).preview.targetMonth, "2026-09");
+  const draftResponse = await handleStaffScheduleApiRequest(
+    request("/api/admin/staff-schedules/automatic-draft"),
+    { service, authService },
+  );
+  assert.equal(draftResponse.status, 201);
+  assert.deepEqual(calls, [
+    ["preview", "admin-auto", "2026-09"],
+    ["draft", "admin-auto", "2026-09"],
+  ]);
+
+  const unauthenticated = await handleStaffScheduleApiRequest(
+    new Request("http://localhost/api/admin/staff-schedules/automatic-preview", { method: "POST" }),
+    { service, authService },
+  );
+  assert.equal(unauthenticated.status, 401);
 });

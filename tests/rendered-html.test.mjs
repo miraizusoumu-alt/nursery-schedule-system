@@ -290,6 +290,10 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(adminClient, /AdminMonthlyHeadcount/);
   assert.match(staffSchedule, /月間職員シフト|この月のシフトを作成|日別シフトを保存|シフトを確定|シフトを修正/);
   assert.match(staffSchedule, /選択日|月間|公休|連続勤務/);
+  assert.match(staffSchedule, /自動シフトをプレビュー/);
+  assert.match(staffSchedule, /この内容で下書きを作成/);
+  assert.match(staffSchedule, /自動作成上の未解決事項はありません/);
+  assert.match(staffSchedule, /保育従事者不足|保育士資格者不足|休憩未配置/);
   assert.match(childManagement, /＋ 園児を新規登録|園児を選択してください|基本利用予定|基本利用パターン履歴/);
   assert.doesNotMatch(childManagement, /<span>変更理由<\/span>/);
   assert.match(childManagement, /保護者ログインアカウント未作成/);
@@ -312,15 +316,21 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(adminHttp, /assertCsrf/);
   assert.match(staffScheduleHttp, /requireSession\(request, authService, \{ type: "administrator" \}\)/);
   assert.match(staffScheduleHttp, /assertCsrf/);
+  assert.match(staffScheduleHttp, /\/api\/admin\/staff-schedules\/automatic-preview/);
+  assert.match(staffScheduleHttp, /\/api\/admin\/staff-schedules\/automatic-draft/);
   assert.match(gateway, /handleAdminScheduleApiRequest/);
   assert.match(gateway, /handleStaffScheduleApiRequest/);
+  assert.match(gateway, /administratorQuarterHourStaffingRequirements/);
   assert.match(authHttp, /\/admin\/schedules/);
   assert.match(worker, /\/admin\/schedules/);
   assert.match(familyService, /administratorScheduleDashboard|administratorRevisionHistory/);
   assert.match(familyService, /changeSummary\?\.kind === "administrator_revision"/);
+  assert.match(familyService, /administratorQuarterHourStaffingRequirements/);
   assert.match(css, /"Yu Gothic UI"/);
   assert.match(css, /grid-template-columns:\s*repeat\(6/);
   assert.match(css, /admin-nav-logout/);
+  assert.match(css, /automatic-shift-preview/);
+  assert.match(css, /automatic-preview-days/);
 });
 
 test("supports password managers, visibility controls, and the eight-character policy", async () => {
