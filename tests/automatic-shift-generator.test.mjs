@@ -4,6 +4,7 @@ import {
   calculateAutomaticChildcareShift,
   mergeChildcareAssignmentsIntoSegments,
 } from "../lib/server/staffing/automatic-shift-generator.mjs";
+import { staffDateWorkKey } from "../lib/server/staffing/automatic-work-limits.mjs";
 
 function addMinutes(time, amount) {
   const [hours, minutes] = time.split(":").map(Number);
@@ -52,6 +53,12 @@ function staff(id, options = {}) {
 
 function workDays(dates, staffId = "A") {
   return dates.map((date) => ({ staffId, date, dayType: "work", segments: [] }));
+}
+
+function quarterHourRequirements(date, startTime, count) {
+  return Array.from({ length: count }, (_, index) => {
+    return requirement(addMinutes(startTime, index * 15), 1, 0, date);
+  });
 }
 
 test("assigns nobody when a quarter-hour slot requires no staff", () => {
@@ -129,6 +136,26 @@ test("honors day-off and work-time preferences without extending outside them", 
     .slots[0].assignedChildcareWorkerCount, 1);
   assert.equal(calculateAutomaticChildcareShift([requirement("08:00", 1)], [staff("D")])
     .slots[0].assignedChildcareWorkerCount, 0);
+});
+
+test("prioritizes a daily work-time preference over an otherwise continuing candidate", () => {
+  const regular = staff("A", { staffCode: "ST0001" });
+  const preferred = staff("B", {
+    staffCode: "ST0002",
+    schedulePreferences: [{
+      date: "2026-09-07",
+      preferenceType: "work_time",
+      startTime: "10:00",
+      endTime: "16:00",
+    }],
+  });
+  const result = calculateAutomaticChildcareShift([
+    requirement("09:45", 1),
+    requirement("10:00", 1),
+  ], [regular, preferred]);
+  assert.deepEqual(result.slots[0].assignedStaff.map((entry) => entry.staffId), ["A"]);
+  assert.deepEqual(result.slots[1].assignedStaff.map((entry) => entry.staffId), ["B"]);
+  assert.equal(result.slots[1].assignedStaff[0].hasWorkTimePreference, true);
 });
 
 test("allows a sixth work day but excludes seventh days and existing non-work days", () => {
@@ -220,4 +247,59 @@ test("merges contiguous quarter-hour childcare assignments into work segments", 
       activityType: "childcare",
     },
   ]);
+});
+
+test("stops automatic work at 480 daily minutes when a break cannot be assumed", () => {
+  const date = "2026-09-07";
+  const result = calculateAutomaticChildcareShift(
+    quarterHourRequirements(date, "09:00", 33),
+    [staff("A")],
+    {
+      workLimitProfiles: [{ staffId: "A", existingDays: [] }],
+      breakUnavailableStaffDates: [staffDateWorkKey("A", date)],
+    },
+  );
+  assert.equal(result.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount, 0), 32);
+  assert.equal(result.slots.at(-1).assignedChildcareWorkerCount, 0);
+  assert.ok(result.slots.at(-1).candidateEvaluations[0].exclusionReasons.includes("DAILY_WORK_LIMIT"));
+});
+
+test("uses 31-day and 30-day full-time monthly limits while leaving part-time uncapped monthly", () => {
+  const profile = staff("A", { availableStartTime: "09:00", availableEndTime: "18:00" });
+  const excluded31 = new Set([4, 8, 12, 16, 20, 24, 28, 31]);
+  const dates31 = Array.from({ length: 31 }, (_, index) => index + 1)
+    .filter((day) => !excluded31.has(day))
+    .map((day) => `2026-10-${String(day).padStart(2, "0")}`);
+  const slots31 = dates31.flatMap((date) => quarterHourRequirements(date, "09:00", 32));
+  const result31 = calculateAutomaticChildcareShift(slots31, [profile], {
+    workLimitProfiles: [{
+      staffId: "A",
+      monthlyLimitMinutes: 176 * 60,
+      existingDays: [],
+    }],
+    breakUnavailableStaffDates: dates31.map((date) => staffDateWorkKey("A", date)),
+  });
+  assert.equal(result31.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount * 15, 0), 176 * 60);
+  assert.ok(result31.slots.at(-1).candidateEvaluations[0].exclusionReasons.includes("MONTHLY_WORK_LIMIT"));
+
+  const excluded30 = new Set([4, 8, 12, 16, 20, 24, 28, 30]);
+  const dates30 = Array.from({ length: 30 }, (_, index) => index + 1)
+    .filter((day) => !excluded30.has(day))
+    .map((day) => `2026-09-${String(day).padStart(2, "0")}`);
+  const slots30 = dates30.flatMap((date) => quarterHourRequirements(date, "09:00", 32));
+  const result30 = calculateAutomaticChildcareShift(slots30, [profile], {
+    workLimitProfiles: [{
+      staffId: "A",
+      monthlyLimitMinutes: 168 * 60,
+      existingDays: [],
+    }],
+    breakUnavailableStaffDates: dates30.map((date) => staffDateWorkKey("A", date)),
+  });
+  assert.equal(result30.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount * 15, 0), 168 * 60);
+
+  const partTime = calculateAutomaticChildcareShift(slots30, [profile], {
+    workLimitProfiles: [{ staffId: "A", monthlyLimitMinutes: null, existingDays: [] }],
+    breakUnavailableStaffDates: dates30.map((date) => staffDateWorkKey("A", date)),
+  });
+  assert.equal(partTime.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount * 15, 0), 176 * 60);
 });

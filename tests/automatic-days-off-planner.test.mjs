@@ -50,6 +50,10 @@ function dayOffPreference(date) {
   return { date, preferenceType: "day_off", startTime: null, endTime: null };
 }
 
+function workTimePreference(date, startTime = "09:00", endTime = "17:00") {
+  return { date, preferenceType: "work_time", startTime, endTime };
+}
+
 function requirement(date, requiredChildcareWorkers = 1, requiredLicensedNurseryTeachers = 1) {
   return {
     date,
@@ -162,6 +166,19 @@ test("uses prior-month work when preventing a seventh consecutive work day", () 
   }).staffPlans[0];
   assert.equal(plan.consecutiveWorkCheck.valid, true);
   assert.ok(plan.finalPlannedDaysOff.some((date) => date <= "2026-09-04"));
+});
+
+test("keeps daily work-time preferences out of automatic public-day-off candidates", () => {
+  const preferredDate = "2026-09-14";
+  const plan = planFullTimeMonthlyDaysOff({
+    targetMonth: "2026-09",
+    staffProfiles: [staff("A", {
+      schedulePreferences: [workTimePreference(preferredDate)],
+    })],
+  }).staffPlans[0];
+  assert.ok(plan.workTimePreferences.includes(preferredDate));
+  assert.ok(!plan.finalPlannedDaysOff.includes(preferredDate));
+  assert.equal(plan.plannedDaysOffCount, 9);
 });
 
 test("reports an unsatisfied plan without overwriting fixed work or breaking constraints", () => {

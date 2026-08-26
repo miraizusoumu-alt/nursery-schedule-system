@@ -5,6 +5,7 @@ import {
   compareScheduledWorkProgress,
 } from "../lib/server/staffing/automatic-shift-generator.mjs";
 import { calculateIntegratedMonthlyAutomaticShift } from "../lib/server/staffing/integrated-monthly-shift-generator.mjs";
+import { calculateDailyScheduledWorkMinutes } from "../lib/server/staffing/scheduled-work.mjs";
 
 function addMinutes(time, amount) {
   const [hours, minutes] = time.split(":").map(Number);
@@ -24,6 +25,12 @@ function requirement(date, startTime, requiredChildcareWorkers, requiredLicensed
 
 function scheduleDay(staffId, date, dayType = "work", segments = []) {
   return { staffId, date, dayType, segments };
+}
+
+function quarterHourRequirements(date, startTime, count, requiredWorkers = 1) {
+  return Array.from({ length: count }, (_, index) => {
+    return requirement(date, addMinutes(startTime, index * 15), requiredWorkers);
+  });
 }
 
 function staff(id, options = {}) {
@@ -276,4 +283,109 @@ test("returns the same integrated month for the same input regardless of array o
     requirementSlots: [...requirements].reverse(),
   });
   assert.deepEqual(first, second);
+});
+
+test("produces 480 final daily work minutes after placing a required continuous break", () => {
+  const date = "2026-09-14";
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [staff("A"), staff("B", { staffCode: "ST0002" })],
+    requirementSlots: quarterHourRequirements(date, "09:00", 36),
+  });
+  const dailyMinutes = ["A", "B"].map((staffId) => {
+    return calculateDailyScheduledWorkMinutes(
+      result.scheduleSegments.filter((segment) => segment.staffId === staffId && segment.date === date),
+    );
+  });
+  assert.equal(Math.max(...dailyMinutes), 480);
+  assert.ok(result.breakPlan.breakOutcomes.some((outcome) => {
+    return outcome.date === date && outcome.requiredBreakMinutes === 60 && outcome.placementSucceeded;
+  }));
+});
+
+test("keeps final daily work within 480 minutes when the required break cannot be placed", () => {
+  const date = "2026-09-14";
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [staff("A")],
+    requirementSlots: quarterHourRequirements(date, "09:00", 33),
+  });
+  const scheduledWorkMinutes = calculateDailyScheduledWorkMinutes(
+    result.scheduleSegments.filter((segment) => segment.staffId === "A" && segment.date === date),
+  );
+  assert.equal(scheduledWorkMinutes, 480);
+  assert.equal(result.placement.slots.reduce((total, slot) => total + slot.childcareWorkerShortage, 0), 1);
+  assert.ok(result.breakPlan.unresolvedConstraints.some((entry) => entry.staffId === "A" && entry.date === date));
+});
+
+test("preserves existing limit overages, blocks additions, and reports administrator review", () => {
+  const dailyDate = "2026-09-14";
+  const dailyOver = staff("A", {
+    scheduledDays: [scheduleDay("A", dailyDate, "work", [{
+      activityType: "administration",
+      startTime: "09:00",
+      endTime: "17:15",
+    }])],
+  });
+  const dailyResult = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [dailyOver],
+    requirementSlots: [requirement(dailyDate, "17:15", 1)],
+  });
+  assert.equal(dailyResult.placement.slots[0].assignedChildcareWorkerCount, 0);
+  assert.ok(dailyResult.daysOffPlan.unresolvedConstraints.some((entry) => {
+    return entry.code === "DAILY_WORK_LIMIT_UNRESOLVED" && entry.staffId === "A";
+  }));
+  assert.equal(calculateDailyScheduledWorkMinutes(dailyOver.scheduledDays[0].segments), 495);
+
+  const nonWorkDates = new Set([4, 8, 12, 16, 20, 24, 28, 30]);
+  const existingDays = Array.from({ length: 30 }, (_, index) => index + 1)
+    .filter((day) => !nonWorkDates.has(day))
+    .map((day) => scheduleDay("B", `2026-09-${String(day).padStart(2, "0")}`, "work", [{
+      activityType: "childcare",
+      startTime: "09:00",
+      endTime: "17:00",
+    }]));
+  const monthlyResult = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [staff("B", { scheduledDays: existingDays })],
+    requirementSlots: [requirement("2026-09-30", "09:00", 1)],
+  });
+  assert.equal(monthlyResult.placement.slots[0].assignedChildcareWorkerCount, 0);
+  assert.ok(monthlyResult.daysOffPlan.unresolvedConstraints.some((entry) => {
+    return entry.code === "MONTHLY_WORK_LIMIT_UNRESOLVED" && entry.staffId === "B";
+  }));
+  assert.equal(existingDays.length, 22);
+});
+
+test("prioritizes work-time preference dates and reports them when no placement is needed", () => {
+  const date = "2026-09-14";
+  const preferred = staff("A", {
+    schedulePreferences: [{
+      date,
+      preferenceType: "work_time",
+      startTime: "10:00",
+      endTime: "16:00",
+    }],
+  });
+  const assigned = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [preferred],
+    requirementSlots: [requirement(date, "10:00", 1)],
+  });
+  assert.deepEqual(assigned.placement.slots[0].assignedStaff.map((entry) => entry.staffId), ["A"]);
+  assert.ok(!assigned.daysOffPlan.staffPlans[0].finalPlannedDaysOff.includes(date));
+  assert.ok(!assigned.daysOffPlan.unresolvedConstraints.some((entry) => {
+    return entry.code === "PREFERRED_WORK_DAY_UNASSIGNED";
+  }));
+
+  const unassigned = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [preferred],
+    requirementSlots: [],
+  });
+  assert.ok(!unassigned.daysOffPlan.staffPlans[0].finalPlannedDaysOff.includes(date));
+  assert.ok(unassigned.daysOffPlan.unresolvedConstraints.some((entry) => {
+    return entry.code === "PREFERRED_WORK_DAY_UNASSIGNED" && entry.date === date;
+  }));
 });
