@@ -9,7 +9,7 @@
                     "dev":  "node server/run.mjs dev",
                     "build":  "vinext build",
                     "start":  "node server/run.mjs start",
-                    "test":  "npm run build \u0026\u0026 node --test tests/rendered-html.test.mjs tests/domain.test.mjs tests/database.test.mjs tests/auth.test.mjs tests/family-schedule.test.mjs tests/staff-management.test.mjs tests/staffing-requirements.test.mjs tests/staffing-candidates.test.mjs tests/staff-schedule.test.mjs tests/automatic-shift-generator.test.mjs tests/automatic-days-off-planner.test.mjs tests/integrated-monthly-shift-generator.test.mjs",
+                    "test":  "npm run build \u0026\u0026 node --test tests/rendered-html.test.mjs tests/domain.test.mjs tests/database.test.mjs tests/auth.test.mjs tests/family-schedule.test.mjs tests/staff-management.test.mjs tests/staffing-requirements.test.mjs tests/staffing-candidates.test.mjs tests/staff-schedule.test.mjs tests/automatic-shift-generator.test.mjs tests/automatic-days-off-planner.test.mjs tests/integrated-monthly-shift-generator.test.mjs tests/automatic-break-planner.test.mjs",
                     "lint":  "eslint . --ignore-pattern dist --ignore-pattern .next",
                     "cf:typegen":  "wrangler types worker-configuration.d.ts --config wrangler.types.jsonc",
                     "db:generate":  "drizzle-kit generate",
