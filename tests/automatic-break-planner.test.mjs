@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planAutomaticBreaks } from "../lib/server/staffing/automatic-break-planner.mjs";
+import {
+  planAutomaticBreaks,
+  reserveAutomaticBreakCoverage,
+} from "../lib/server/staffing/automatic-break-planner.mjs";
 import { calculateIntegratedMonthlyAutomaticShift } from "../lib/server/staffing/integrated-monthly-shift-generator.mjs";
 import { evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot } from "../lib/server/staffing/staff-eligibility.mjs";
 import {
@@ -198,6 +201,151 @@ test("places a continuous 45-minute break in fifteen-minute slots", () => {
   assert.equal(duration, 45);
   assert.equal(result.breakSegments[0].activityType, "break");
   assert.equal(result.reliefAssignments[0].endTime, outcome.breakEndTime);
+});
+
+test("reserves reciprocal 45-minute breaks without adding staff or short childcare fragments", () => {
+  const profiles = [staff("A"), staff("B", { staffCode: "ST0002" })];
+  const slots = [
+    ...requirements("07:00", "12:00", { requiredChildcareWorkers: 1, requiredLicensedNurseryTeachers: 1 }),
+    ...requirements("12:00", "15:00", { requiredChildcareWorkers: 2, requiredLicensedNurseryTeachers: 2 }),
+    ...requirements("15:00", "20:00", { requiredChildcareWorkers: 1, requiredLicensedNurseryTeachers: 1 }),
+  ];
+  const placement = manualPlacement(slots, profiles, (slot) => {
+    if (slot.startTime < "12:00") return ["A"];
+    if (slot.startTime < "15:00") return ["A", "B"];
+    return ["B"];
+  });
+  const breakRequirements = [
+    { staffId: "A", date: "2026-09-07", requiredBreakMinutes: 45 },
+    { staffId: "B", date: "2026-09-07", requiredBreakMinutes: 45 },
+  ];
+  const prepared = reserveAutomaticBreakCoverage({
+    requirementSlots: slots,
+    placement,
+    staffProfiles: profiles,
+    breakRequirements,
+  });
+  const result = planAutomaticBreaks({
+    requirementSlots: slots,
+    placement: prepared.placement,
+    staffProfiles: profiles,
+    breakRequirements,
+    reservedBreaks: prepared.reservations,
+  });
+  assert.equal(prepared.reservations.length, 2);
+  assert.equal(prepared.reassignments.length, 6);
+  assert.equal(result.breakOutcomes.every((outcome) => outcome.placementSucceeded), true);
+  assert.equal(result.breakOutcomes.every((outcome) => outcome.reliefRequired), true);
+  assert.equal(result.shortagesAfterBreaks.length, 0);
+  assert.equal(result.placement.slots.every((slot) => {
+    return slot.assignedChildcareWorkerCount === slot.requiredChildcareWorkers
+      && slot.assignedLicensedNurseryTeacherCount === slot.requiredLicensedNurseryTeachers;
+  }), true);
+  assert.equal(result.childcareSegments.some((segment) => {
+    const [startHours, startMinutes] = segment.startTime.split(":").map(Number);
+    const [endHours, endMinutes] = segment.endTime.split(":").map(Number);
+    return endHours * 60 + endMinutes - startHours * 60 - startMinutes <= 30;
+  }), false);
+  const repeated = reserveAutomaticBreakCoverage({
+    requirementSlots: [...slots].reverse(),
+    placement: manualPlacement([...slots].reverse(), [...profiles].reverse(), (slot) => {
+      if (slot.startTime < "12:00") return ["A"];
+      if (slot.startTime < "15:00") return ["A", "B"];
+      return ["B"];
+    }),
+    staffProfiles: [...profiles].reverse(),
+    breakRequirements: [...breakRequirements].reverse(),
+  });
+  assert.deepEqual(repeated.reservations, prepared.reservations);
+});
+
+test("reserves reciprocal continuous 60-minute breaks while keeping daily work at 480 minutes", () => {
+  const profiles = [staff("A"), staff("B", { staffCode: "ST0002" })];
+  const slots = [
+    ...requirements("06:30", "12:30", { requiredChildcareWorkers: 1 }),
+    ...requirements("12:30", "14:30", { requiredChildcareWorkers: 2 }),
+    ...requirements("14:30", "20:30", { requiredChildcareWorkers: 1 }),
+  ];
+  const placement = manualPlacement(slots, profiles, (slot) => {
+    if (slot.startTime < "12:30") return ["A"];
+    if (slot.startTime < "14:30") return ["A", "B"];
+    return ["B"];
+  });
+  const breakRequirements = [
+    { staffId: "A", date: "2026-09-07", requiredBreakMinutes: 60 },
+    { staffId: "B", date: "2026-09-07", requiredBreakMinutes: 60 },
+  ];
+  const prepared = reserveAutomaticBreakCoverage({
+    requirementSlots: slots,
+    placement,
+    staffProfiles: profiles,
+    breakRequirements,
+  });
+  const result = planAutomaticBreaks({
+    requirementSlots: slots,
+    placement: prepared.placement,
+    staffProfiles: profiles,
+    breakRequirements,
+    reservedBreaks: prepared.reservations,
+  });
+  assert.equal(prepared.reservations.length, 2);
+  assert.equal(result.breakOutcomes.every((outcome) => outcome.placementSucceeded), true);
+  for (const profile of profiles) {
+    assert.equal(calculateDailyScheduledWorkMinutes(
+      result.scheduleSegments.filter((segment) => segment.staffId === profile.id),
+    ), 480);
+  }
+});
+
+test("does not reserve a break through a replacement blocked by preferences, protected leave, or a seventh day", () => {
+  const previousSixDays = Array.from({ length: 6 }, (_, index) => {
+    return scheduleDay("B", `2026-09-${String(index + 1).padStart(2, "0")}`);
+  });
+  const slots = [
+    ...requirements("07:00", "12:00", { requiredChildcareWorkers: 1 }),
+    ...requirements("12:00", "15:00", { requiredChildcareWorkers: 2 }),
+    ...requirements("15:00", "20:00", { requiredChildcareWorkers: 1 }),
+  ];
+  const breakRequirements = [
+    { staffId: "A", date: "2026-09-07", requiredBreakMinutes: 45 },
+    { staffId: "B", date: "2026-09-07", requiredBreakMinutes: 45 },
+  ];
+  for (const restricted of [
+    staff("B", {
+      staffCode: "ST0002",
+      schedulePreferences: [{ date: "2026-09-07", preferenceType: "day_off" }],
+    }),
+    staff("B", {
+      staffCode: "ST0002",
+      schedulePreferences: [{
+        date: "2026-09-07", preferenceType: "work_time", startTime: "12:00", endTime: "20:00",
+      }],
+    }),
+    staff("B", {
+      staffCode: "ST0002",
+      scheduledDays: [scheduleDay("B", "2026-09-07", "day_off")],
+    }),
+    staff("B", {
+      staffCode: "ST0002",
+      scheduledDays: [scheduleDay("B", "2026-09-07", "paid_leave")],
+    }),
+    staff("B", { staffCode: "ST0002", scheduledDays: previousSixDays }),
+  ]) {
+    const profiles = [staff("A"), restricted];
+    const placement = manualPlacement(slots, profiles, (slot) => {
+      if (slot.startTime < "12:00") return ["A"];
+      if (slot.startTime < "15:00") return ["A", "B"];
+      return ["B"];
+    });
+    const prepared = reserveAutomaticBreakCoverage({
+      requirementSlots: slots,
+      placement,
+      staffProfiles: profiles,
+      breakRequirements,
+    });
+    assert.deepEqual(prepared.reservations, []);
+    assert.deepEqual(prepared.reassignments, []);
+  }
 });
 
 test("uses existing staffing margin before adding a relief assignment", () => {
