@@ -362,8 +362,25 @@ test("creates, confirms, revises, and reconfirms monthly schedules without chang
     );
     insertCondition.run("condition-full", "staff-full", "2026-01-01", "常勤", "admin-a");
     insertCondition.run("condition-part", "staff-part", "2026-01-01", "非常勤", "admin-a");
+    const insertQualification = database.prepare(
+      "INSERT INTO staff_qualifications (id, staff_id, qualification_type, valid_from) VALUES (?, ?, 'licensed_nursery_teacher', '2026-01-01')",
+    );
+    insertQualification.run("qualification-full", "staff-full");
+    insertQualification.run("qualification-part", "staff-part");
+    const insertAvailability = database.prepare(
+      `INSERT INTO staff_weekly_availability
+       (work_condition_version_id, weekday, available, start_time, end_time)
+       VALUES (?, ?, 1, '06:30', '20:30')`,
+    );
+    for (const conditionId of ["condition-full", "condition-part"]) {
+      for (let weekday = 0; weekday <= 6; weekday += 1) insertAvailability.run(conditionId, weekday);
+    }
     const actor = { type: "administrator", id: "admin-a", role: "normal", mustChangePassword: false };
-    const service = createStaffScheduleService({ database, now: () => new Date("2026-08-25T08:00:00.000Z") });
+    const service = createStaffScheduleService({
+      database,
+      now: () => new Date("2026-08-25T08:00:00.000Z"),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider(),
+    });
 
     let september = service.createMonthlySchedule(actor, { targetMonth: "2026-09" });
     const firstVersionId = september.viewedVersion.id;
@@ -386,7 +403,11 @@ test("creates, confirms, revises, and reconfirms monthly schedules without chang
       segments: [],
     });
     assert.equal(september.staff.find((staff) => staff.id === "staff-full").monthlyScheduledWorkMinutes, 40 * 60);
-    september = service.confirmMonthlySchedule(actor, { targetMonth: "2026-09", versionId: firstVersionId });
+    september = service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+      acknowledgeWarnings: true,
+    });
     assert.equal(september.month.status, "confirmed");
     assert.throws(() => service.saveScheduleDay(actor, {
       targetMonth: "2026-09", versionId: firstVersionId, staffId: "staff-full",
@@ -405,7 +426,11 @@ test("creates, confirms, revises, and reconfirms monthly schedules without chang
       dayType: "paid_leave",
       segments: [],
     });
-    september = service.confirmMonthlySchedule(actor, { targetMonth: "2026-09", versionId: secondVersionId });
+    september = service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-09",
+      versionId: secondVersionId,
+      acknowledgeWarnings: true,
+    });
     assert.equal(september.month.status, "confirmed");
     const oldVersion = service.scheduleDashboard(actor, { targetMonth: "2026-09", versionId: firstVersionId, selectedDate: "2026-09-01" });
     const newVersion = service.scheduleDashboard(actor, { targetMonth: "2026-09", selectedDate: "2026-09-01" });
@@ -950,7 +975,11 @@ test("rechecks only the saved current draft without writing and reflects later m
       operations: database.prepare("SELECT COUNT(*) AS count FROM operation_logs").get().count,
     }, beforeReview, "a draft review is read-only and does not create an operation log");
 
-    service.confirmMonthlySchedule(actor, { targetMonth: "2026-09", versionId: firstVersionId });
+    service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+      acknowledgeWarnings: true,
+    });
     assert.throws(() => service.recheckCurrentDraft(actor, {
       targetMonth: "2026-09",
       versionId: firstVersionId,
@@ -996,6 +1025,174 @@ test("rechecks only the saved current draft without writing and reflects later m
     });
     assert.equal(improvedReview.issues.childcareStaffing.length, 0);
     assert.equal(improvedReview.issues.licensedStaffing.length, 0);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("enforces blocked, acknowledged-warning, ready, and latest-state confirmation decisions in service and API", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-schedule-confirmation-"));
+  const database = openDatabase(resolve(directory, "confirmation.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-confirm", "confirm-admin", "架空 確定管理者");
+    insertAutomaticStaff(database, "admin-confirm", "staff-confirm", "ST0001");
+    database.prepare(
+      "UPDATE staff_work_condition_versions SET employment_type = '非常勤' WHERE staff_id = 'staff-confirm'",
+    ).run();
+    const actor = { type: "administrator", id: "admin-confirm", role: "normal", mustChangePassword: false };
+    const requirementsByMonth = new Map([
+      ["2026-11", quarterHourRequirements("2026-11-02", "09:00", "09:15", 1, 1)],
+    ]);
+    const service = createStaffScheduleService({
+      database,
+      now: () => new Date("2026-08-27T01:00:00.000Z"),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider((targetMonth) => {
+        return requirementsByMonth.get(targetMonth) ?? [];
+      }),
+    });
+
+    const ready = service.createMonthlySchedule(actor, { targetMonth: "2026-09" });
+    const readyReview = service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-09",
+      versionId: ready.viewedVersion.id,
+    });
+    assert.equal(readyReview.confirmation.status, "ready");
+    assert.equal(service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-09",
+      versionId: ready.viewedVersion.id,
+    }).month.status, "confirmed");
+
+    let warning = service.createMonthlySchedule(actor, { targetMonth: "2026-10" });
+    service.saveStaffPreference(actor, {
+      targetMonth: "2026-10",
+      staffId: "staff-confirm",
+      date: "2026-10-05",
+      preferenceType: "day_off",
+    });
+    warning = service.saveScheduleDay(actor, {
+      targetMonth: "2026-10",
+      versionId: warning.viewedVersion.id,
+      staffId: "staff-confirm",
+      date: "2026-10-05",
+      dayType: "work",
+      segments: [{ startTime: "09:00", endTime: "10:00", activityType: "administration" }],
+    });
+    const warningReview = service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-10",
+      versionId: warning.viewedVersion.id,
+    });
+    assert.equal(warningReview.confirmation.status, "warning");
+    assert.equal(warningReview.confirmation.yellowIssues.some((issue) => issue.code === "PREFERENCE_DAY_OFF"), true);
+    assert.throws(() => service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-10",
+      versionId: warning.viewedVersion.id,
+    }), (error) => error.code === "SCHEDULE_CONFIRMATION_REQUIRES_ACKNOWLEDGEMENT"
+      && error.details.confirmation.yellowCount > 0);
+    assert.equal(database.prepare(
+      "SELECT status FROM staff_schedule_versions WHERE id = ?",
+    ).get(warning.viewedVersion.id).status, "draft");
+    assert.equal(service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-10",
+      versionId: warning.viewedVersion.id,
+      acknowledgeWarnings: true,
+    }).month.status, "confirmed");
+    const warningLog = JSON.parse(database.prepare(
+      `SELECT detail_json FROM operation_logs
+       WHERE operation = 'staff_schedule_month.confirmed' AND target_month = '2026-10'`,
+    ).get().detail_json);
+    assert.deepEqual(warningLog.confirmation, {
+      redCount: 0,
+      yellowCount: warningReview.confirmation.yellowCount,
+      warningsAcknowledged: true,
+    });
+
+    const blocked = service.createMonthlySchedule(actor, { targetMonth: "2026-11" });
+    const blockedReview = service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-11",
+      versionId: blocked.viewedVersion.id,
+    });
+    assert.equal(blockedReview.confirmation.status, "blocked");
+    assert.throws(() => service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-11",
+      versionId: blocked.viewedVersion.id,
+      acknowledgeWarnings: true,
+    }), (error) => error.code === "SCHEDULE_CONFIRMATION_BLOCKED"
+      && error.details.confirmation.redCount > 0);
+    assert.equal(database.prepare(
+      "SELECT status FROM staff_schedule_months WHERE target_month = '2026-11'",
+    ).get().status, "draft");
+
+    const stale = service.createMonthlySchedule(actor, { targetMonth: "2026-12" });
+    assert.equal(service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-12",
+      versionId: stale.viewedVersion.id,
+    }).confirmation.status, "ready");
+    requirementsByMonth.set("2026-12", quarterHourRequirements("2026-12-01", "09:00", "09:15", 1, 1));
+    assert.throws(() => service.confirmMonthlySchedule(actor, {
+      targetMonth: "2026-12",
+      versionId: stale.viewedVersion.id,
+    }), (error) => error.code === "SCHEDULE_CONFIRMATION_BLOCKED");
+
+    const apiWarning = service.createMonthlySchedule(actor, { targetMonth: "2027-01" });
+    service.saveStaffPreference(actor, {
+      targetMonth: "2027-01",
+      staffId: "staff-confirm",
+      date: "2027-01-04",
+      preferenceType: "day_off",
+    });
+    service.saveScheduleDay(actor, {
+      targetMonth: "2027-01",
+      versionId: apiWarning.viewedVersion.id,
+      staffId: "staff-confirm",
+      date: "2027-01-04",
+      dayType: "work",
+      segments: [{ startTime: "09:00", endTime: "10:00", activityType: "administration" }],
+    });
+    const csrfToken = "confirmation-csrf-token";
+    const authService = {
+      sessionByToken: (token) => token === "admin-session" ? {
+        actor,
+        csrfTokenHash: hashOpaqueValue(csrfToken),
+      } : null,
+    };
+    const confirmRequest = (targetMonth, versionId, acknowledgeWarnings = false) => new Request(
+      "http://localhost/api/admin/staff-schedules/confirm",
+      {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          cookie: `nursery_session=admin-session; nursery_csrf=${csrfToken}`,
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({ targetMonth, versionId, acknowledgeWarnings }),
+      },
+    );
+    const blockedResponse = await handleStaffScheduleApiRequest(
+      confirmRequest("2026-11", blocked.viewedVersion.id, true),
+      { service, authService },
+    );
+    assert.equal(blockedResponse.status, 409);
+    const blockedBody = await blockedResponse.json();
+    assert.equal(blockedBody.code, "SCHEDULE_CONFIRMATION_BLOCKED");
+    assert.equal(blockedBody.details.confirmation.redCount > 0, true);
+
+    const warningResponse = await handleStaffScheduleApiRequest(
+      confirmRequest("2027-01", apiWarning.viewedVersion.id),
+      { service, authService },
+    );
+    assert.equal(warningResponse.status, 409);
+    assert.equal((await warningResponse.json()).code, "SCHEDULE_CONFIRMATION_REQUIRES_ACKNOWLEDGEMENT");
+    const acknowledgedResponse = await handleStaffScheduleApiRequest(
+      confirmRequest("2027-01", apiWarning.viewedVersion.id, true),
+      { service, authService },
+    );
+    assert.equal(acknowledgedResponse.status, 200);
+    assert.equal((await acknowledgedResponse.json()).schedule.month.status, "confirmed");
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

@@ -48,7 +48,12 @@ export async function handleStaffScheduleApiRequest(request, { service, authServ
     return json({ ok: false, code: "NOT_FOUND", message: "APIが見つかりません。" }, 404);
   } catch (error) {
     if (error instanceof AuthError) {
-      return json({ ok: false, code: error.code, message: error.message }, error.status);
+      return json({
+        ok: false,
+        code: error.code,
+        message: error.message,
+        ...(error.details ? { details: error.details } : {}),
+      }, error.status);
     }
     return json({ ok: false, code: "INTERNAL_ERROR", message: "処理を完了できませんでした。" }, 500);
   }

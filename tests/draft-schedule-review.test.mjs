@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateCurrentDraftSchedule } from "../lib/server/staffing/draft-schedule-review.mjs";
+import {
+  classifyDraftScheduleConfirmation,
+  evaluateCurrentDraftSchedule,
+} from "../lib/server/staffing/draft-schedule-review.mjs";
 
 function profile(id, staffCode, qualification = "licensed_nursery_teacher", options = {}) {
   return {
@@ -116,6 +119,10 @@ test("rechecks saved staffing, work conditions, limits, consecutive work, and br
   assert.equal(review.issues.breaks.some((issue) => issue.code === "BREAK_CHILDCARE_COVERAGE_SHORTAGE"), true);
   assert.equal(review.issues.breaks.some((issue) => issue.code === "BREAK_LICENSED_COVERAGE_SHORTAGE"), true);
   assert.equal(review.issues.breaks.some((issue) => issue.code === "BREAK_MINUTES_SHORTAGE"), true);
+  assert.equal(review.confirmation.status, "blocked");
+  assert.equal(review.confirmation.canConfirm, false);
+  assert.equal(review.confirmation.redCount > 0, true);
+  assert.equal(review.confirmation.yellowCount > 0, true, "red and yellow issues remain separately visible");
   assert.deepEqual(
     review.issues.breaks
       .filter((issue) => issue.staffId === "staff-a" && issue.code === "BREAK_CHILDCARE_COVERAGE_SHORTAGE")
@@ -147,4 +154,76 @@ test("reports a clean current draft when staffing and rules are satisfied", () =
     breaks: 0,
   });
   assert.equal(review.hasIssues, false);
+  assert.deepEqual(review.confirmation, {
+    status: "ready",
+    canConfirm: true,
+    requiresConfirmation: false,
+    redCount: 0,
+    yellowCount: 0,
+    redSummary: [],
+    yellowSummary: [],
+    redIssues: [],
+    yellowIssues: [],
+  });
+});
+
+test("classifies staffing, qualification, break, and consecutive-work issues as confirmation blockers", () => {
+  const issue = (code, label = code) => ({ code, label, date: "2026-09-01", staffId: "staff-a" });
+  const confirmation = classifyDraftScheduleConfirmation({
+    issues: {
+      childcareStaffing: [{ date: "2026-09-01", startTime: "09:00", endTime: "09:15" }],
+      licensedStaffing: [{ date: "2026-09-01", startTime: "09:00", endTime: "09:15" }],
+      workConditions: [
+        issue("MISSING_REQUIRED_ROLE"),
+        issue("MISSING_REQUIRED_QUALIFICATION"),
+        issue("NO_VALID_CHILDCARE_CREDENTIAL"),
+        issue("CONSECUTIVE_WORK_LIMIT"),
+      ],
+      breaks: [
+        issue("BREAK_MINUTES_SHORTAGE"),
+        issue("BREAK_CHILDCARE_COVERAGE_SHORTAGE"),
+        issue("BREAK_LICENSED_COVERAGE_SHORTAGE"),
+      ],
+    },
+  });
+
+  assert.equal(confirmation.status, "blocked");
+  assert.equal(confirmation.canConfirm, false);
+  assert.equal(confirmation.redCount, 9);
+  assert.deepEqual(new Set(confirmation.redIssues.map((entry) => entry.code)), new Set([
+    "CHILDCARE_STAFFING_SHORTAGE",
+    "LICENSED_STAFFING_SHORTAGE",
+    "MISSING_REQUIRED_ROLE",
+    "MISSING_REQUIRED_QUALIFICATION",
+    "NO_VALID_CHILDCARE_CREDENTIAL",
+    "CONSECUTIVE_WORK_LIMIT",
+    "BREAK_MINUTES_SHORTAGE",
+    "BREAK_CHILDCARE_COVERAGE_SHORTAGE",
+    "BREAK_LICENSED_COVERAGE_SHORTAGE",
+  ]));
+});
+
+test("classifies preferences, availability, limits, and days-off issues as acknowledged warnings", () => {
+  const codes = [
+    "PREFERENCE_DAY_OFF",
+    "OUTSIDE_PREFERENCE_TIME",
+    "WEEKDAY_NOT_AVAILABLE",
+    "DAILY_WORK_LIMIT_EXCEEDED",
+    "MONTHLY_WORK_LIMIT_EXCEEDED",
+    "DAY_OFF_TARGET_UNRESOLVED",
+  ];
+  const confirmation = classifyDraftScheduleConfirmation({
+    issues: {
+      childcareStaffing: [],
+      licensedStaffing: [],
+      workConditions: codes.map((code) => ({ code, label: code, date: "2026-09-01", staffId: "staff-a" })),
+      breaks: [],
+    },
+  });
+
+  assert.equal(confirmation.status, "warning");
+  assert.equal(confirmation.canConfirm, true);
+  assert.equal(confirmation.requiresConfirmation, true);
+  assert.equal(confirmation.yellowCount, codes.length);
+  assert.deepEqual(confirmation.yellowIssues.map((entry) => entry.code), codes);
 });

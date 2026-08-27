@@ -125,6 +125,23 @@ type DraftReviewIssue = AutomaticPreviewIssue & {
   startDate?: string;
   shortage?: number;
 };
+type DraftReviewIssueKind = "childcareStaffing" | "licensedStaffing" | "workConditions" | "breaks";
+type DraftConfirmationIssue = DraftReviewIssue & {
+  kind: DraftReviewIssueKind;
+  code: string;
+  label: string;
+};
+type DraftConfirmation = {
+  status: "blocked" | "warning" | "ready";
+  canConfirm: boolean;
+  requiresConfirmation: boolean;
+  redCount: number;
+  yellowCount: number;
+  redSummary: Array<{ code: string; label: string; count: number }>;
+  yellowSummary: Array<{ code: string; label: string; count: number }>;
+  redIssues: DraftConfirmationIssue[];
+  yellowIssues: DraftConfirmationIssue[];
+};
 type DraftReview = {
   targetMonth: string;
   versionId: string;
@@ -144,6 +161,7 @@ type DraftReview = {
     breaks: number;
   };
   hasIssues: boolean;
+  confirmation: DraftConfirmation;
 };
 
 const dayTypeLabels: Record<DayType, string> = {
@@ -326,6 +344,38 @@ function DraftReviewIssueGroup({
   </details>;
 }
 
+function DraftConfirmationStatus({ confirmation }: { confirmation: DraftConfirmation }) {
+  const blocked = confirmation.status === "blocked";
+  const warning = confirmation.status === "warning";
+  const issues = blocked ? confirmation.redIssues : warning ? confirmation.yellowIssues : [];
+  const summaries = blocked ? confirmation.redSummary : warning ? confirmation.yellowSummary : [];
+  const title = blocked ? "このシフトはまだ確定できません" : warning ? "確認事項があります" : "確定可能です";
+  const description = blocked
+    ? "確定前に赤の問題を修正してください。管理者確認だけでは確定できません。"
+    : warning
+      ? "内容を確認した管理者だけが、明示的な確認操作で確定できます。"
+      : "現在のシフトに確定を妨げる問題はありません。";
+
+  return <div className={`schedule-confirmation-status ${confirmation.status}`} role={blocked ? "alert" : "status"}>
+    <div>
+      <strong>{title}</strong>
+      <span>{description}</span>
+    </div>
+    {summaries.length ? <ul className="schedule-confirmation-summary">
+      {summaries.map((summary) => <li key={summary.code}><span>{summary.label}</span><strong>{summary.count}件</strong></li>)}
+    </ul> : null}
+    {issues.length ? <details>
+      <summary>{blocked ? "確定前に修正する箇所を見る" : "管理者が確認する項目を見る"}（{issues.length}件）</summary>
+      <ul className="schedule-confirmation-issues">
+        {issues.map((issue, index) => <li key={`${issue.kind}-${issue.code}-${index}`}>
+          <strong>{issue.label}</strong>
+          <span>{draftReviewIssueLabel(issue, issue.kind)}</span>
+        </li>)}
+      </ul>
+    </details> : null}
+  </div>;
+}
+
 export function AdminStaffScheduleManagement() {
   const initialMonth = currentTargetMonth();
   const [schedule, setSchedule] = useState<StaffSchedule | null>(null);
@@ -396,7 +446,13 @@ export function AdminStaffScheduleManagement() {
     try {
       await task();
     } catch (caught) {
-      if (caught instanceof ApiError && caught.code === "STAFF_SCHEDULE_VERSION_CHANGED") {
+      if (caught instanceof ApiError
+        && (caught.code === "SCHEDULE_CONFIRMATION_BLOCKED"
+          || caught.code === "SCHEDULE_CONFIRMATION_REQUIRES_ACKNOWLEDGEMENT")) {
+        const details = caught.details as { review?: DraftReview } | null;
+        if (details?.review) setDraftReview(details.review);
+        setError(caught.message);
+      } else if (caught instanceof ApiError && caught.code === "STAFF_SCHEDULE_VERSION_CHANGED") {
         setError("別の操作でシフトが更新されました。最新状態を読み直してください。");
       } else {
         setError(caught instanceof Error ? caught.message : "処理できませんでした。");
@@ -439,6 +495,54 @@ export function AdminStaffScheduleManagement() {
     ["breaks", "休憩", draftReview.issues.breaks],
   ] as const : [];
   const hasUnsavedEditorChanges = dayEditorDirty || preferenceEditorDirty;
+  const currentDraftReview = draftReview && schedule?.viewedVersion?.id === draftReview.versionId
+    ? draftReview
+    : null;
+  const confirmationStatus = currentDraftReview?.confirmation.status ?? null;
+
+  function confirmCurrentDraft() {
+    if (!schedule?.viewedVersion) return;
+    if (hasUnsavedEditorChanges) {
+      setMessage("");
+      setError("未保存の変更があります。保存してから確定してください。");
+      return;
+    }
+    void run("confirm", async () => {
+      let latestReview = currentDraftReview;
+      if (!latestReview) {
+        const result = await api<{ review: DraftReview }>("/api/admin/staff-schedules/draft-review", {
+          method: "POST",
+          body: { targetMonth, versionId: schedule.viewedVersion?.id },
+        });
+        latestReview = result.review;
+        setDraftReview(result.review);
+      }
+      if (latestReview.confirmation.status === "blocked") {
+        setError("このシフトはまだ確定できません。確定前に赤の問題を修正してください。");
+        return;
+      }
+      if (latestReview.confirmation.status === "warning" && !currentDraftReview) {
+        setMessage("確認が必要な項目があります。内容を確認してから、明示的な確定操作を行ってください。");
+        return;
+      }
+      const acknowledgeWarnings = latestReview.confirmation.status === "warning";
+      const prompt = acknowledgeWarnings
+        ? `黄色の確認事項${latestReview.confirmation.yellowCount}件を確認しました。${formatMonth(targetMonth)}のシフトを確定しますか？`
+        : `${formatMonth(targetMonth)}のシフトを確定しますか？`;
+      if (!window.confirm(prompt)) return;
+      const result = await api<{ schedule: StaffSchedule }>("/api/admin/staff-schedules/confirm", {
+        method: "POST",
+        body: {
+          targetMonth,
+          versionId: schedule.viewedVersion?.id,
+          acknowledgeWarnings,
+        },
+      });
+      setSchedule(result.schedule);
+      setDraftReview(null);
+      setMessage("月間シフトを確定しました。");
+    });
+  }
 
   function markDayEditorDirty() {
     setDayEditorDirty(true);
@@ -500,14 +604,18 @@ export function AdminStaffScheduleManagement() {
               setMessage("保存済みの現在の下書きを再チェックしました。");
             });
           }}>{busy === "draft-review" ? "再チェック中..." : "現在の下書きを再チェック"}</button> : null}
-          {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" ? <button type="button" className="primary" disabled={busy !== ""} onClick={() => {
-            if (!window.confirm(`${formatMonth(targetMonth)}のシフトを確定しますか？`)) return;
-            void run("confirm", async () => {
-              const result = await api<{ schedule: StaffSchedule }>("/api/admin/staff-schedules/confirm", { method: "POST", body: { targetMonth, versionId: schedule.viewedVersion?.id } });
-              setSchedule(result.schedule);
-              setMessage("月間シフトを確定しました。");
-            });
-          }}>{busy === "confirm" ? "確定中..." : "シフトを確定"}</button> : null}
+          {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" ? <button
+            type="button"
+            className="primary"
+            disabled={busy !== "" || hasUnsavedEditorChanges || confirmationStatus === "blocked"}
+            onClick={confirmCurrentDraft}
+          >{busy === "confirm"
+              ? "確定前の再チェック中..."
+              : confirmationStatus === "blocked"
+                ? "修正後に確定できます"
+                : confirmationStatus === "warning"
+                  ? "確認事項を確認してシフトを確定"
+                  : "シフトを確定"}</button> : null}
           {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "confirmed" ? <button type="button" disabled={busy !== ""} onClick={() => {
             if (!window.confirm("確定済みシフトをコピーして、修正用の新しい下書きを作成しますか？")) return;
             void run("revision", async () => {
@@ -524,6 +632,10 @@ export function AdminStaffScheduleManagement() {
         {schedule?.month?.status === "draft" ? <p className="auth-message info">すでに作成中のシフトがあります。自動作成では上書きしません。</p> : null}
         {schedule?.month?.status === "confirmed" ? <p className="auth-message info">確定済みのシフトがあります。自動作成では変更しません。</p> : null}
       </section>
+
+      {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" && hasUnsavedEditorChanges
+        ? <p className="auth-message warning" role="status">未保存の変更があります。保存してから確定してください。</p>
+        : null}
 
       {automaticPreview && !schedule?.month ? <section className="auth-section automatic-shift-preview">
         <div className="auth-section-heading">
@@ -572,6 +684,7 @@ export function AdminStaffScheduleManagement() {
           <span className={`admin-state ${draftReview.hasIssues ? "warning" : "confirmed"}`}>{draftReview.hasIssues ? "要確認" : "確認事項なし"}</span>
         </div>
         <p className="admin-schedule-note">保存済みの現在版を読み取り専用で評価しています。勤務・公休・休憩は変更していません。</p>
+        <DraftConfirmationStatus confirmation={draftReview.confirmation} />
         <div className="automatic-preview-issues" aria-label="現在の下書きの確認事項">
           {!draftReview.hasIssues ? <p className="auth-message info">現在の下書きに確認が必要な項目はありません。</p> : draftReviewIssueGroups.map(([kind, label, issues]) => issues.length
             ? <DraftReviewIssueGroup key={kind} kind={kind} label={label} issues={issues} />

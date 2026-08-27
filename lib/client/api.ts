@@ -8,12 +8,14 @@ export function csrfToken() {
 export class ApiError extends Error {
   code: string;
   status: number;
+  details: unknown;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, details: unknown = null) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -28,7 +30,12 @@ export async function api<T>(path: string, options: { method?: string; body?: un
     credentials: "same-origin",
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  const result = await response.json() as T & { code?: string; message?: string };
-  if (!response.ok) throw new ApiError(result.code ?? "REQUEST_FAILED", result.message ?? "処理を完了できませんでした。", response.status);
+  const result = await response.json() as T & { code?: string; message?: string; details?: unknown };
+  if (!response.ok) throw new ApiError(
+    result.code ?? "REQUEST_FAILED",
+    result.message ?? "処理を完了できませんでした。",
+    response.status,
+    result.details,
+  );
   return result;
 }

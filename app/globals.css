@@ -125,6 +125,79 @@
   min-width: 0;
 }
 
+.schedule-confirmation-status {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 14px;
+}
+
+.schedule-confirmation-status.blocked {
+  border-left-color: #a33d32;
+  background: var(--danger-soft);
+}
+
+.schedule-confirmation-status.warning {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.schedule-confirmation-status > div {
+  display: grid;
+  gap: 4px;
+}
+
+.schedule-confirmation-status > div strong {
+  font-size: 1rem;
+}
+
+.schedule-confirmation-status > div span,
+.schedule-confirmation-status details {
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+}
+
+.schedule-confirmation-status details summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.schedule-confirmation-summary,
+.schedule-confirmation-issues {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.schedule-confirmation-summary li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(54, 76, 67, 0.18);
+  padding-bottom: 6px;
+}
+
+.schedule-confirmation-issues {
+  padding-top: 10px;
+}
+
+.schedule-confirmation-issues li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-left: 3px solid currentColor;
+  padding-left: 9px;
+}
+
+.schedule-confirmation-issues li span {
+  overflow-wrap: anywhere;
+}
+
 .automatic-preview-issues > details,
 .automatic-preview-days > details {
   min-width: 0;
