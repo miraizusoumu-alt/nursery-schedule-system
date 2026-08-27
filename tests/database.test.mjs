@@ -61,6 +61,71 @@ test("applies the SQLite migration and creates every required table", async () =
   });
 });
 
+test("loads the Cabinet Office 2026-2027 holiday master and preserves existing work conditions as holiday-available", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const migrationsPath = await copyMigrationsThrough(directory, "0011_melted_surge.sql");
+    const database = openDatabase(resolve(directory, "holiday-upgrade.sqlite"));
+    try {
+      await applyMigrations(database, migrationsPath);
+      const timestamp = "2026-08-27T00:00:00.000Z";
+      database.prepare(
+        `INSERT INTO administrators
+         (id, login_id, display_name, role, must_change_password, credential_version, status, created_at, updated_at)
+         VALUES ('holiday-admin', 'holiday-admin', '架空祝日管理者', 'master', 0, 1, 'active', ?, ?)`,
+      ).run(timestamp, timestamp);
+      database.prepare(
+        `INSERT INTO staff_members
+         (id, staff_code, name, employment_start_date, status, created_at, updated_at)
+         VALUES ('holiday-staff', 'ST-HOLIDAY', '架空祝日職員', '2026-01-01', 'active', ?, ?)`,
+      ).run(timestamp, timestamp);
+      database.prepare(
+        `INSERT INTO staff_work_condition_versions
+         (id, staff_id, valid_from, employment_type, created_by_administrator_id, created_at, updated_at)
+         VALUES ('holiday-condition', 'holiday-staff', '2026-01-01', '常勤', 'holiday-admin', ?, ?)`,
+      ).run(timestamp, timestamp);
+
+      const migrated = await applyMigrations(database);
+      assert.deepEqual(migrated.applied, ["0012_hot_human_torch.sql"]);
+      assert.equal(database.prepare(
+        "SELECT holiday_work_allowed FROM staff_work_condition_versions WHERE id = 'holiday-condition'",
+      ).get().holiday_work_allowed, 1);
+      assert.equal(database.prepare("SELECT COUNT(*) AS count FROM national_holidays").get().count, 35);
+      assert.deepEqual(
+        database.prepare(
+          `SELECT holiday_date, name FROM national_holidays
+           WHERE holiday_date IN ('2026-05-06', '2026-08-11', '2026-09-22') ORDER BY holiday_date`,
+        ).all().map(({ holiday_date, name }) => ({ holiday_date, name })),
+        [
+          { holiday_date: "2026-05-06", name: "休日" },
+          { holiday_date: "2026-08-11", name: "山の日" },
+          { holiday_date: "2026-09-22", name: "休日" },
+        ],
+      );
+      assert.equal(database.prepare(
+        "SELECT COUNT(*) AS count FROM national_holidays WHERE holiday_date = '2026-08-04'",
+      ).get().count, 0);
+      const source = database.prepare(
+        "SELECT DISTINCT source, source_url, source_data_sha256 FROM national_holidays",
+      ).all().map(({ source, source_url, source_data_sha256 }) => ({
+        source,
+        source_url,
+        source_data_sha256,
+      }));
+      assert.deepEqual(source, [{
+        source: "cabinet_office_japan",
+        source_url: "https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv",
+        source_data_sha256: "CEC37A743C96995CDB9CB52B685C9003634682A9B0E1A640A6B9B96881FE964A",
+      }]);
+      const report = inspectDatabase(database);
+      assert.equal(report.integrityOk, true);
+      assert.equal(report.foreignKeysOk, true);
+      assert.deepEqual(report.missingTables, []);
+    } finally {
+      database.close();
+    }
+  });
+});
+
 test("seeds only explicit fictional records and remains idempotent", async () => {
   await withTemporaryDirectory(async (directory) => {
     const database = openDatabase(resolve(directory, "seed.sqlite"));

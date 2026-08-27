@@ -6,6 +6,26 @@ const timestamps = {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 };
 
+export const nationalHolidays = sqliteTable(
+  "national_holidays",
+  {
+    holidayDate: text("holiday_date").primaryKey(),
+    name: text("name").notNull(),
+    source: text("source").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    sourceLastModified: text("source_last_modified").notNull(),
+    sourceDataSha256: text("source_data_sha256").notNull(),
+  },
+  (table) => [
+    check(
+      "chk_national_holidays_date",
+      sql`${table.holidayDate} glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`,
+    ),
+    check("chk_national_holidays_name", sql`length(trim(${table.name})) > 0`),
+    check("chk_national_holidays_source", sql`length(trim(${table.source})) > 0`),
+  ],
+);
+
 export const families = sqliteTable(
   "families",
   {
@@ -193,6 +213,7 @@ export const staffWorkConditionVersions = sqliteTable(
     weeklyWorkDaysMax: integer("weekly_work_days_max"),
     dailyWorkMinutesMin: integer("daily_work_minutes_min"),
     dailyWorkMinutesMax: integer("daily_work_minutes_max"),
+    holidayWorkAllowed: integer("holiday_work_allowed", { mode: "boolean" }).notNull().default(true),
     createdByAdministratorId: text("created_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
     ...timestamps,
   },

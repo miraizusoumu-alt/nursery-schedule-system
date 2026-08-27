@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { applyMasterDataForMigration } from "./master-data.mjs";
 
 export const PROJECT_ROOT = fileURLToPath(new URL("..", import.meta.url));
 export const DEFAULT_DATABASE_PATH = resolve(PROJECT_ROOT, "local-data", "nursery-schedule.sqlite");
@@ -56,6 +57,7 @@ export const REQUIRED_APPLICATION_TABLES_BY_MIGRATION = {
   "0009_exotic_skin.sql": ["staff_schedule_preferences"],
   "0010_careless_leper_queen.sql": [],
   "0011_melted_surge.sql": ["staff_weekly_availability_candidates"],
+  "0012_hot_human_torch.sql": ["national_holidays"],
 };
 
 export const REQUIRED_APPLICATION_TABLES = [
@@ -146,6 +148,7 @@ export async function applyMigrations(database, migrationsPath = DEFAULT_MIGRATI
     database.exec("BEGIN IMMEDIATE");
     try {
       database.exec(sqlText);
+      applyMasterDataForMigration(database, fileName);
       database
         .prepare("INSERT INTO _schema_migrations (name, checksum, applied_at) VALUES (?, ?, ?)")
         .run(fileName, checksum, new Date().toISOString());

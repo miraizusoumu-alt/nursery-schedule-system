@@ -51,6 +51,7 @@ function staff(id, options = {}) {
     validQualifications: qualification
       ? [{ type: qualification, validFrom: "2026-01-01", validTo: null }]
       : [],
+    nationalHolidays: options.nationalHolidays ?? [],
     workConditions: [{
       id: `condition-${id}`,
       validFrom: "2026-01-01",
@@ -383,6 +384,32 @@ test("uses a licensed relief worker when a licensed teacher takes a break", () =
   assert.deepEqual(result.breakOutcomes[0].reliefStaffIds, ["C"]);
   assert.ok(result.placement.slots.every((slot) => slot.assignedLicensedNurseryTeacherCount >= 1));
   assert.equal(result.shortagesAfterBreaks.length, 0);
+});
+
+test("does not use a holiday-unavailable worker as break relief", () => {
+  const nationalHolidays = [{
+    holidayDate: "2026-08-11",
+    name: "山の日",
+    source: "cabinet_office_japan",
+  }];
+  const profiles = [
+    staff("A", { nationalHolidays }),
+    staff("B", { nationalHolidays }),
+    staff("C", {
+      nationalHolidays,
+      workCondition: { holidayWorkAllowed: false },
+    }),
+  ];
+  const slots = requirements("11:00", "14:00", { date: "2026-08-11" });
+  const result = planAutomaticBreaks({
+    requirementSlots: slots,
+    placement: manualPlacement(slots, profiles, ["A", "B"]),
+    staffProfiles: profiles,
+    breakRequirements: [{ staffId: "A", date: "2026-08-11", requiredBreakMinutes: 60 }],
+  });
+  assert.equal(result.breakOutcomes[0].placementSucceeded, false);
+  assert.deepEqual(result.breakOutcomes[0].reliefStaffIds, []);
+  assert.deepEqual(result.reliefAssignments, []);
 });
 
 test("keeps a relief worker inside the availability candidate selected for that day", () => {

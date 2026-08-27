@@ -85,6 +85,13 @@
       "when": 1787817473513,
       "tag": "0011_melted_surge",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787832797508,
+      "tag": "0012_hot_human_torch",
+      "breakpoints": true
     }
   ]
 }

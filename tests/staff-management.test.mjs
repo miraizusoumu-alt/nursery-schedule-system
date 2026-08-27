@@ -210,7 +210,8 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
     }).staff[0].id;
     service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2026-04-01", validTo: "2026-09-30", employmentType: "非常勤",
-      monthlyMinutesLimit: 7200, maxConsecutiveDays: 4, ...partTimeConditions(), availability: allWeekdays(),
+      monthlyMinutesLimit: 7200, maxConsecutiveDays: 4, holidayWorkAllowed: false,
+      ...partTimeConditions(), availability: allWeekdays(),
     });
     expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2026-07-01", validTo: "2026-12-31", employmentType: "非常勤",
@@ -227,6 +228,8 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
     });
     assert.equal(management.staff[0].conditions.length, 2);
     assert.equal(management.staff[0].conditions[0].employmentType, "非常勤");
+    assert.equal(management.staff[0].conditions[0].holidayWorkAllowed, false);
+    assert.equal(management.staff[0].conditions[1].holidayWorkAllowed, true, "omission keeps the compatible default");
     assert.deepEqual({
       weeklyMinutesLimit: management.staff[0].conditions[0].weeklyMinutesLimit,
       weeklyMinutesLimitType: management.staff[0].conditions[0].weeklyMinutesLimitType,

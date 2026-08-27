@@ -154,6 +154,79 @@ test("keeps Sunday availability possible and rejects unavailable or inactive sta
   assert.ok(inactive.exclusionReasons.includes("INACTIVE"));
 });
 
+test("uses the national holiday gate for the anonymous August acceptance conditions", () => {
+  const nationalHolidays = [{
+    holidayDate: "2026-08-11",
+    name: "山の日",
+    source: "cabinet_office_japan",
+  }];
+  function augustStaff(code, holidayWorkAllowed, schedulePreferences = []) {
+    return staff({
+      id: `staff-${code}`,
+      staffCode: `ST-${code}`,
+      name: `架空職員${code}`,
+      employmentStartDate: "2026-01-01",
+      employmentEndDate: null,
+      validQualifications: [{
+        type: "licensed_nursery_teacher",
+        validFrom: "2026-01-01",
+        validTo: null,
+      }],
+      nationalHolidays,
+      schedulePreferences,
+      workConditions: [{
+        validFrom: "2026-01-01",
+        validTo: null,
+        employmentType: "常勤",
+        holidayWorkAllowed,
+        availability: [{
+          weekday: 2,
+          available: true,
+          startTime: "08:30",
+          endTime: "17:30",
+          candidates: [
+            { candidateId: `${code}-morning`, startTime: "08:30", endTime: "12:00", weekOrdinals: null },
+            { candidateId: `${code}-day`, startTime: "09:00", endTime: "17:30", weekOrdinals: null },
+          ],
+        }],
+      }],
+    });
+  }
+  const holidaySlot = { date: "2026-08-11", startTime: "09:00", endTime: "09:15" };
+  for (const code of ["A", "B", "C", "D", "G", "J"]) {
+    const result = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+      augustStaff(code, true),
+      holidaySlot,
+    );
+    assert.equal(result.eligible, true, `${code} is available on the holiday`);
+    assert.equal(result.isNationalHoliday, true);
+  }
+  for (const code of ["E", "H", "I"]) {
+    const preferences = code === "H" ? [{
+      date: "2026-08-11",
+      preferenceType: "work_time",
+      startTime: "09:00",
+      endTime: "17:00",
+    }] : [];
+    const result = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+      augustStaff(code, false, preferences),
+      holidaySlot,
+    );
+    assert.equal(result.eligible, false, `${code} is excluded from the holiday`);
+    assert.ok(result.exclusionReasons.includes("HOLIDAY_NOT_AVAILABLE"));
+  }
+  const requestedDayOff = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+    augustStaff("F", false, [{ date: "2026-08-11", preferenceType: "day_off" }]),
+    holidaySlot,
+  );
+  assert.equal(requestedDayOff.eligible, false);
+  assert.ok(requestedDayOff.exclusionReasons.includes("PREFERENCE_DAY_OFF"));
+  assert.equal(evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(
+    augustStaff("E", false),
+    { ...holidaySlot, date: "2026-08-04" },
+  ).eligible, true, "holiday settings do not affect an ordinary Tuesday");
+});
+
 test("uses day-specific preferences before weekly availability for automatic placement", () => {
   const weeklyStaff = staff({
     workConditions: [{
@@ -522,6 +595,11 @@ test("loads preferences and only current schedule versions into automatic candid
     ).run();
 
     const [profile] = loadStaffCandidateProfiles(database);
+    assert.equal(profile.nationalHolidays.length, 35);
+    assert.equal(profile.nationalHolidays.some((holiday) => (
+      holiday.holidayDate === "2026-08-11" && holiday.name === "山の日"
+    )), true);
+    assert.equal(profile.workConditions[0].holidayWorkAllowed, true);
     assert.deepEqual(profile.schedulePreferences, [{
       date: "2026-09-07", preferenceType: "work_time", startTime: "10:00", endTime: "16:00",
     }]);

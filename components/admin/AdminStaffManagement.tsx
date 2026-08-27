@@ -46,6 +46,7 @@ type WorkCondition = {
   weeklyWorkDaysMax: number | null;
   dailyWorkMinutesMin: number | null;
   dailyWorkMinutesMax: number | null;
+  holidayWorkAllowed: boolean;
   createdByAdministratorName: string;
   createdAt: string;
   availability: Availability[];
@@ -180,6 +181,7 @@ export function AdminStaffManagement() {
   const [weeklyWorkDaysMax, setWeeklyWorkDaysMax] = useState("");
   const [dailyWorkHoursMin, setDailyWorkHoursMin] = useState("");
   const [dailyWorkHoursMax, setDailyWorkHoursMax] = useState("");
+  const [holidayWorkAllowed, setHolidayWorkAllowed] = useState(true);
   const [availability, setAvailability] = useState<Availability[]>(defaultAvailability());
   const [conditionDirty, setConditionDirty] = useState(false);
   const [busy, setBusy] = useState("");
@@ -223,6 +225,7 @@ export function AdminStaffManagement() {
       : String(condition.weeklyWorkDaysMax));
     setDailyWorkHoursMin(hoursValue(condition?.dailyWorkMinutesMin));
     setDailyWorkHoursMax(hoursValue(condition?.dailyWorkMinutesMax));
+    setHolidayWorkAllowed(condition?.holidayWorkAllowed ?? true);
     setAvailability(condition
       ? weekdays.map(({ value }) => {
           const entry = condition.availability.find((availabilityEntry) => availabilityEntry.weekday === value);
@@ -553,6 +556,10 @@ export function AdminStaffManagement() {
                     }
                   });
                 }}><option value="常勤">常勤</option><option value="非常勤">非常勤</option></select></label>
+                <label className="parent-check-row"><input type="checkbox" checked={holidayWorkAllowed} onChange={(event) => {
+                  const checked = event.currentTarget.checked;
+                  markConditionChanged(() => setHolidayWorkAllowed(checked));
+                }} /><span>祝日も勤務可能</span></label>
               </div>
               {employmentType === "非常勤" ? <div className="admin-part-time-conditions">
                 <h4>非常勤の契約勤務条件</h4>
@@ -655,6 +662,7 @@ export function AdminStaffManagement() {
                       weeklyWorkDaysMax: employmentType === "非常勤" ? Number(weeklyWorkDaysMax) : null,
                       dailyWorkMinutesMin: employmentType === "非常勤" ? hoursToMinutes(dailyWorkHoursMin) : null,
                       dailyWorkMinutesMax: employmentType === "非常勤" ? hoursToMinutes(dailyWorkHoursMax) : null,
+                      holidayWorkAllowed,
                       availability,
                     },
                   });
@@ -672,6 +680,7 @@ export function AdminStaffManagement() {
                   <summary><strong>{condition.employmentType}</strong><span>{condition.validFrom} - {condition.validTo ?? "期限なし"}</span></summary>
                   <p>{formatDateTime(condition.createdAt)} / {condition.createdByAdministratorName}</p>
                   {condition.employmentType === "非常勤" ? <p>週 {formatContractHours(condition.weeklyMinutesLimit)}{condition.weeklyMinutesLimitType === "exclusive" ? "未満" : "以内"} / 週 {condition.preferredWeeklyWorkDaysMin ?? "-"}～{condition.weeklyWorkDaysMax ?? "-"}日 / 1日 {formatContractHours(condition.dailyWorkMinutesMin)}～{formatContractHours(condition.dailyWorkMinutesMax)}</p> : null}
+                  <p>祝日の勤務：{condition.holidayWorkAllowed ? "勤務可能" : "勤務不可"}</p>
                   {condition.availability.map((entry) => <div key={entry.weekday}><span>{weekdays.find((weekday) => weekday.value === entry.weekday)?.label}</span><strong>{entry.available
                     ? entry.candidates.map((candidate, index) => `候補${index + 1} ${candidate.startTime} - ${candidate.endTime}（${candidateWeekLabel(candidate)}）`).join(" / ")
                     : "勤務不可"}</strong></div>)}

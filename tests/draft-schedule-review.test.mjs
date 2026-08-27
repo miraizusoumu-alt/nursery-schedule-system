@@ -19,6 +19,7 @@ function profile(id, staffCode, qualification = "licensed_nursery_teacher", opti
       validFrom: "2026-01-01",
       validTo: null,
     }] : [],
+    nationalHolidays: options.nationalHolidays ?? [],
     workConditions: [{
       id: `condition-${id}`,
       validFrom: "2026-01-01",
@@ -183,6 +184,27 @@ test("reports mixed alternative availability candidates and week-specific outsid
   assert.equal(review.confirmation.yellowIssues.some((issue) => (
     issue.code === "MULTIPLE_AVAILABILITY_CANDIDATES_USED"
   )), true);
+});
+
+test("reports manual work by a holiday-unavailable staff member as a yellow confirmation item", () => {
+  const staff = profile("staff-holiday", "ST0091", "licensed_nursery_teacher", {
+    nationalHolidays: [{
+      holidayDate: "2026-08-11",
+      name: "山の日",
+      source: "cabinet_office_japan",
+    }],
+    workCondition: { holidayWorkAllowed: false },
+  });
+  const review = evaluateCurrentDraftSchedule({
+    targetMonth: "2026-08",
+    requirementSource: { period: null, slots: [] },
+    staffProfiles: [staff],
+    currentDays: [day("staff-holiday", "2026-08-11", [childcare("09:00", "10:00")])],
+  });
+  const issue = review.issues.workConditions.find((entry) => entry.code === "HOLIDAY_NOT_AVAILABLE");
+  assert.equal(issue.label, "この職員は祝日勤務不可として登録されています");
+  assert.equal(review.confirmation.yellowIssues.some((entry) => entry.code === "HOLIDAY_NOT_AVAILABLE"), true);
+  assert.equal(review.confirmation.redIssues.some((entry) => entry.code === "HOLIDAY_NOT_AVAILABLE"), false);
 });
 
 test("reports a clean current draft when staffing and rules are satisfied", () => {
