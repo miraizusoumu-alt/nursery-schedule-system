@@ -26,6 +26,9 @@ export async function handleStaffScheduleApiRequest(request, { service, authServ
     if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules/automatic-draft") {
       return json({ ok: true, ...service.createAutomaticMonthlyDraft(session.actor, body) }, 201);
     }
+    if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules/draft-review") {
+      return json({ ok: true, review: service.recheckCurrentDraft(session.actor, body) });
+    }
     if (request.method === "POST" && url.pathname === "/api/admin/staff-schedules") {
       return json({ ok: true, schedule: service.createMonthlySchedule(session.actor, body) }, 201);
     }

@@ -112,6 +112,39 @@ type AutomaticPreview = {
   };
   hasUnresolved: boolean;
 };
+type DraftReviewIssue = AutomaticPreviewIssue & {
+  label?: string;
+  activityType?: ActivityType;
+  actualMinutes?: number;
+  limitMinutes?: number;
+  actualBreakMinutes?: number;
+  scheduledWorkMinutes?: number;
+  dayOffDays?: number;
+  requiredDaysOff?: number;
+  consecutiveDays?: number;
+  startDate?: string;
+  shortage?: number;
+};
+type DraftReview = {
+  targetMonth: string;
+  versionId: string;
+  checkedAt: string;
+  sourcePeriod: { id: string; targetMonth: string; status: string };
+  requirementSlotCount: number;
+  issues: {
+    childcareStaffing: DraftReviewIssue[];
+    licensedStaffing: DraftReviewIssue[];
+    workConditions: DraftReviewIssue[];
+    breaks: DraftReviewIssue[];
+  };
+  summary: {
+    childcareStaffing: number;
+    licensedStaffing: number;
+    workConditions: number;
+    breaks: number;
+  };
+  hasIssues: boolean;
+};
 
 const dayTypeLabels: Record<DayType, string> = {
   work: "勤務",
@@ -232,6 +265,67 @@ function AutomaticIssueDetails({ issue, kind }: {
   </details>;
 }
 
+function draftReviewIssueLabel(issue: DraftReviewIssue, kind: keyof DraftReview["issues"]) {
+  if (kind === "childcareStaffing" || kind === "licensedStaffing") {
+    return issueLabel(issue, kind);
+  }
+  const staff = issue.staffName ? `${issue.staffName}${issue.staffCode ? `（${issue.staffCode}）` : ""}` : "対象職員";
+  const date = issue.date ? formatDate(issue.date) : "対象月内";
+  const time = issue.startTime && issue.endTime ? ` ${issue.startTime}～${issue.endTime}` : "";
+  return `${staff} / ${date}${time}: ${issue.label ?? "確認が必要です"}`;
+}
+
+function DraftReviewIssueDetails({ issue, kind }: {
+  issue: DraftReviewIssue;
+  kind: keyof DraftReview["issues"];
+}) {
+  if (kind === "childcareStaffing" || kind === "licensedStaffing") {
+    return <AutomaticIssueDetails issue={issue} kind={kind} />;
+  }
+  return <details className="automatic-preview-issue-detail">
+    <summary><span>{draftReviewIssueLabel(issue, kind)}</span><strong>詳細を見る</strong></summary>
+    <div className="automatic-preview-issue-body">
+      {kind === "workConditions" ? <dl className="automatic-preview-issue-metrics">
+        {issue.actualMinutes !== undefined ? <div><dt>予定実労働</dt><dd>{formatMinutes(issue.actualMinutes)}</dd></div> : null}
+        {issue.limitMinutes !== undefined ? <div><dt>上限</dt><dd>{formatMinutes(issue.limitMinutes)}</dd></div> : null}
+        {issue.consecutiveDays !== undefined ? <div><dt>連続勤務</dt><dd>{issue.consecutiveDays}日</dd></div> : null}
+        {issue.requiredDaysOff !== undefined ? <div><dt>必要公休</dt><dd>{issue.requiredDaysOff}日</dd></div> : null}
+        {issue.dayOffDays !== undefined ? <div><dt>現在の公休</dt><dd>{issue.dayOffDays}日</dd></div> : null}
+        {issue.shortageDays !== undefined ? <div><dt>不足公休</dt><dd>{issue.shortageDays}日</dd></div> : null}
+      </dl> : null}
+      {kind === "breaks" ? <dl className="automatic-preview-issue-metrics">
+        <div><dt>勤務時間</dt><dd>{issue.workStartTime && issue.workEndTime ? `${issue.workStartTime}～${issue.workEndTime}` : "確認できません"}</dd></div>
+        <div><dt>必要休憩</dt><dd>{issue.requiredBreakMinutes ?? 0}分</dd></div>
+        <div><dt>実際の休憩</dt><dd>{issue.actualBreakMinutes ?? 0}分</dd></div>
+        {issue.requiredChildcareWorkers !== undefined ? <div><dt>必要保育従事者</dt><dd>{issue.requiredChildcareWorkers}名</dd></div> : null}
+        {issue.assignedChildcareWorkerCount !== undefined ? <div><dt>配置済み</dt><dd>{issue.assignedChildcareWorkerCount}名</dd></div> : null}
+        {issue.requiredLicensedNurseryTeachers !== undefined ? <div><dt>必要保育士資格者</dt><dd>{issue.requiredLicensedNurseryTeachers}名</dd></div> : null}
+        {issue.assignedLicensedNurseryTeacherCount !== undefined ? <div><dt>配置済み資格者</dt><dd>{issue.assignedLicensedNurseryTeacherCount}名</dd></div> : null}
+      </dl> : null}
+      <p>{issue.label ?? "現在の下書きに確認が必要です。"}</p>
+    </div>
+  </details>;
+}
+
+function DraftReviewIssueGroup({
+  kind,
+  label,
+  issues,
+}: {
+  kind: keyof DraftReview["issues"];
+  label: string;
+  issues: DraftReviewIssue[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return <details onToggle={(event) => {
+    const open = event.currentTarget.open;
+    setExpanded(open);
+  }}>
+    <summary>{label}（{issues.length}件）</summary>
+    {expanded ? <ul className="automatic-preview-issue-list">{issues.map((issue, index) => <li key={`${kind}-${issue.code ?? "issue"}-${index}`}><DraftReviewIssueDetails issue={issue} kind={kind} /></li>)}</ul> : null}
+  </details>;
+}
+
 export function AdminStaffScheduleManagement() {
   const initialMonth = currentTargetMonth();
   const [schedule, setSchedule] = useState<StaffSchedule | null>(null);
@@ -247,6 +341,9 @@ export function AdminStaffScheduleManagement() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [automaticPreview, setAutomaticPreview] = useState<AutomaticPreview | null>(null);
+  const [draftReview, setDraftReview] = useState<DraftReview | null>(null);
+  const [dayEditorDirty, setDayEditorDirty] = useState(false);
+  const [preferenceEditorDirty, setPreferenceEditorDirty] = useState(false);
 
   const load = useCallback(async (month: string, date = `${month}-01`, versionId = "") => {
     const query = new URLSearchParams({ targetMonth: month, selectedDate: date });
@@ -254,6 +351,9 @@ export function AdminStaffScheduleManagement() {
     const result = await api<{ schedule: StaffSchedule }>(`/api/admin/staff-schedules?${query}`);
     setSchedule(result.schedule);
     setAutomaticPreview(null);
+    setDraftReview(null);
+    setDayEditorDirty(false);
+    setPreferenceEditorDirty(false);
     setTargetMonth(month);
     setSelectedDate(result.schedule.selectedDate);
     setSelectedStaffId((current) => result.schedule.staff.some((staff) => staff.id === current)
@@ -283,6 +383,8 @@ export function AdminStaffScheduleManagement() {
       setPreferenceType(preference?.preferenceType ?? "none");
       setPreferenceStartTime(preference?.startTime ?? preference?.weeklyAvailability?.startTime ?? "09:00");
       setPreferenceEndTime(preference?.endTime ?? preference?.weeklyAvailability?.endTime ?? "18:00");
+      setDayEditorDirty(false);
+      setPreferenceEditorDirty(false);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [selectedStaff]);
@@ -330,6 +432,23 @@ export function AdminStaffScheduleManagement() {
     ["consecutiveWork", "連勤条件", automaticPreview.issues.consecutiveWork],
     ["breaks", "休憩未配置", automaticPreview.issues.breaks],
   ] as const : [];
+  const draftReviewIssueGroups = draftReview ? [
+    ["childcareStaffing", "配置不足 / 保育従事者", draftReview.issues.childcareStaffing],
+    ["licensedStaffing", "配置不足 / 保育士資格者", draftReview.issues.licensedStaffing],
+    ["workConditions", "勤務条件", draftReview.issues.workConditions],
+    ["breaks", "休憩", draftReview.issues.breaks],
+  ] as const : [];
+  const hasUnsavedEditorChanges = dayEditorDirty || preferenceEditorDirty;
+
+  function markDayEditorDirty() {
+    setDayEditorDirty(true);
+    setDraftReview(null);
+  }
+
+  function markPreferenceEditorDirty() {
+    setPreferenceEditorDirty(true);
+    setDraftReview(null);
+  }
 
   return (
     <div className="admin-area-content staff-schedule-management">
@@ -366,6 +485,21 @@ export function AdminStaffScheduleManagement() {
             setAutomaticPreview(result.preview);
             setMessage(`${formatMonth(targetMonth)}の自動シフト案を計算しました。まだ保存されていません。`);
           })}>{busy === "automatic-preview" ? "計算中..." : "自動シフトをプレビュー"}</button> : null}
+          {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" ? <button type="button" disabled={busy !== ""} onClick={() => {
+            if (hasUnsavedEditorChanges) {
+              setMessage("");
+              setError("未保存の変更があります。保存してから再チェックしてください。");
+              return;
+            }
+            void run("draft-review", async () => {
+              const result = await api<{ review: DraftReview }>("/api/admin/staff-schedules/draft-review", {
+                method: "POST",
+                body: { targetMonth, versionId: schedule.viewedVersion?.id },
+              });
+              setDraftReview(result.review);
+              setMessage("保存済みの現在の下書きを再チェックしました。");
+            });
+          }}>{busy === "draft-review" ? "再チェック中..." : "現在の下書きを再チェック"}</button> : null}
           {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" ? <button type="button" className="primary" disabled={busy !== ""} onClick={() => {
             if (!window.confirm(`${formatMonth(targetMonth)}のシフトを確定しますか？`)) return;
             void run("confirm", async () => {
@@ -432,6 +566,20 @@ export function AdminStaffScheduleManagement() {
         </div>
       </section> : null}
 
+      {draftReview && schedule?.viewedVersion?.id === draftReview.versionId ? <section className="auth-section automatic-shift-preview draft-schedule-review">
+        <div className="auth-section-heading">
+          <div><span>{formatMonth(draftReview.targetMonth)} / 現在の作成中版</span><h3>下書きの再チェック結果</h3></div>
+          <span className={`admin-state ${draftReview.hasIssues ? "warning" : "confirmed"}`}>{draftReview.hasIssues ? "要確認" : "確認事項なし"}</span>
+        </div>
+        <p className="admin-schedule-note">保存済みの現在版を読み取り専用で評価しています。勤務・公休・休憩は変更していません。</p>
+        <div className="automatic-preview-issues" aria-label="現在の下書きの確認事項">
+          {!draftReview.hasIssues ? <p className="auth-message info">現在の下書きに確認が必要な項目はありません。</p> : draftReviewIssueGroups.map(([kind, label, issues]) => issues.length
+            ? <DraftReviewIssueGroup key={kind} kind={kind} label={label} issues={issues} />
+            : null)}
+        </div>
+        <p className="admin-schedule-note">確認日時: {new Date(draftReview.checkedAt).toLocaleString("ja-JP")}</p>
+      </section> : null}
+
       {schedule ? <section className="auth-section">
         <div className="auth-section-heading"><div><span>{formatMonth(targetMonth)}</span><h3>職員と日付を選択</h3></div></div>
         <div className="staff-schedule-selection">
@@ -447,17 +595,17 @@ export function AdminStaffScheduleManagement() {
       {selectedStaff ? <section className="auth-section staff-preference-editor">
         <div className="auth-section-heading">
           <div><span>{selectedStaff.name} / {formatDate(selectedDate)}</span><h3>希望休・希望勤務時間</h3></div>
-          {selectedStaff.selectedPreference.requiresAdministratorReview ? <span className="admin-state warning">要確認</span> : null}
+          <span className={`admin-state ${preferenceEditorDirty ? "warning" : "confirmed"}`}>{busy === "preference" ? "保存中" : preferenceEditorDirty ? "未保存" : "保存済み"}</span>
         </div>
         <p className="admin-schedule-note">実際の公休・有給とは別に、シフト作成前の希望を登録します。</p>
         <div className="staff-preference-options" role="radiogroup" aria-label="希望内容">
-          <label><input type="radio" name="staff-preference" checked={preferenceType === "none"} disabled={busy !== ""} onChange={() => setPreferenceType("none")} />希望なし</label>
-          <label><input type="radio" name="staff-preference" checked={preferenceType === "day_off"} disabled={busy !== ""} onChange={() => setPreferenceType("day_off")} />希望休</label>
-          <label><input type="radio" name="staff-preference" checked={preferenceType === "work_time"} disabled={busy !== ""} onChange={() => setPreferenceType("work_time")} />希望勤務時間</label>
+          <label><input type="radio" name="staff-preference" checked={preferenceType === "none"} disabled={busy !== ""} onChange={() => { setPreferenceType("none"); markPreferenceEditorDirty(); }} />希望なし</label>
+          <label><input type="radio" name="staff-preference" checked={preferenceType === "day_off"} disabled={busy !== ""} onChange={() => { setPreferenceType("day_off"); markPreferenceEditorDirty(); }} />希望休</label>
+          <label><input type="radio" name="staff-preference" checked={preferenceType === "work_time"} disabled={busy !== ""} onChange={() => { setPreferenceType("work_time"); markPreferenceEditorDirty(); }} />希望勤務時間</label>
         </div>
         {preferenceType === "work_time" ? <div className="staff-preference-times">
-          <label><span>希望開始</span><select value={preferenceStartTime} disabled={busy !== ""} onChange={(event) => setPreferenceStartTime(event.currentTarget.value)}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
-          <label><span>希望終了</span><select value={preferenceEndTime} disabled={busy !== ""} onChange={(event) => setPreferenceEndTime(event.currentTarget.value)}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+          <label><span>希望開始</span><select value={preferenceStartTime} disabled={busy !== ""} onChange={(event) => { setPreferenceStartTime(event.currentTarget.value); markPreferenceEditorDirty(); }}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+          <label><span>希望終了</span><select value={preferenceEndTime} disabled={busy !== ""} onChange={(event) => { setPreferenceEndTime(event.currentTarget.value); markPreferenceEditorDirty(); }}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
         </div> : null}
         <p className="staff-preference-weekly">
           基本勤務可能時間: {selectedStaff.selectedPreference.weeklyAvailability?.available
@@ -475,6 +623,8 @@ export function AdminStaffScheduleManagement() {
             endTime: preferenceType === "work_time" ? preferenceEndTime : null,
           } });
           setSchedule(result.schedule);
+          setPreferenceEditorDirty(false);
+          setDraftReview(null);
           setMessage(`${selectedStaff.name}の${formatDate(selectedDate)}の希望を保存しました。`);
         })}>{busy === "preference" ? "保存中..." : "希望を保存"}</button>
       </section> : null}
@@ -491,21 +641,40 @@ export function AdminStaffScheduleManagement() {
           {selectedStaff.daysOff.warning ? <p className="auth-message warning">{selectedStaff.daysOff.warning}</p> : null}
 
           <section className="auth-section staff-schedule-editor">
-            <div className="auth-section-heading"><div><span>{selectedStaff.name} / {formatDate(selectedDate)}</span><h3>日別シフト</h3></div>{readOnly ? <span className="admin-state confirmed">閲覧のみ</span> : null}</div>
+            <div className="auth-section-heading"><div><span>{selectedStaff.name} / {formatDate(selectedDate)}</span><h3>日別シフト</h3></div>{readOnly ? <span className="admin-state confirmed">閲覧のみ</span> : <span className={`admin-state ${dayEditorDirty ? "warning" : "confirmed"}`}>{busy === "save" ? "保存中" : dayEditorDirty ? "未保存" : "保存済み"}</span>}</div>
             <label><span>日別状態</span><select value={dayType} disabled={readOnly || busy !== ""} onChange={(event) => {
               const value = event.currentTarget.value as DayType;
               setDayType(value);
               if (value === "day_off" || value === "paid_leave") setSegments([]);
               else if (!segments.length) setSegments(defaultSegments());
+              markDayEditorDirty();
             }}>{Object.entries(dayTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             {dayType === "work" || dayType === "other" ? <div className="staff-schedule-segments">
               {segments.map((segment, index) => <div key={`${index}:${segment.id ?? "new"}`}>
-                <label><span>開始</span><select value={segment.startTime} disabled={readOnly || busy !== ""} onChange={(event) => setSegments((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, startTime: event.currentTarget.value } : entry))}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
-                <label><span>終了</span><select value={segment.endTime} disabled={readOnly || busy !== ""} onChange={(event) => setSegments((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, endTime: event.currentTarget.value } : entry))}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
-                <label><span>勤務内容</span><select value={segment.activityType} disabled={readOnly || busy !== ""} onChange={(event) => setSegments((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, activityType: event.currentTarget.value as ActivityType } : entry))}>{Object.entries(activityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                <button type="button" className="icon-button" title="勤務区分を削除" aria-label="勤務区分を削除" disabled={readOnly || busy !== ""} onClick={() => setSegments((current) => current.filter((_, entryIndex) => entryIndex !== index))}>×</button>
+                <label><span>開始</span><select value={segment.startTime} disabled={readOnly || busy !== ""} onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setSegments((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, startTime: value } : entry));
+                  markDayEditorDirty();
+                }}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                <label><span>終了</span><select value={segment.endTime} disabled={readOnly || busy !== ""} onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setSegments((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, endTime: value } : entry));
+                  markDayEditorDirty();
+                }}>{timeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                <label><span>勤務内容</span><select value={segment.activityType} disabled={readOnly || busy !== ""} onChange={(event) => {
+                  const value = event.currentTarget.value as ActivityType;
+                  setSegments((current) => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, activityType: value } : entry));
+                  markDayEditorDirty();
+                }}>{Object.entries(activityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <button type="button" className="icon-button" title="勤務区分を削除" aria-label="勤務区分を削除" disabled={readOnly || busy !== ""} onClick={() => {
+                  setSegments((current) => current.filter((_, entryIndex) => entryIndex !== index));
+                  markDayEditorDirty();
+                }}>×</button>
               </div>)}
-              <button type="button" disabled={readOnly || busy !== ""} onClick={() => setSegments((current) => [...current, { startTime: "09:00", endTime: "10:00", activityType: "childcare" }])}>＋ 勤務区分を追加</button>
+              <button type="button" disabled={readOnly || busy !== ""} onClick={() => {
+                setSegments((current) => [...current, { startTime: "09:00", endTime: "10:00", activityType: "childcare" }]);
+                markDayEditorDirty();
+              }}>＋ 勤務区分を追加</button>
             </div> : <p className="admin-schedule-note">公休・有給には勤務時間を保存しません。</p>}
             <button type="button" className="primary" disabled={readOnly || busy !== "" || !schedule.viewedVersion} onClick={() => void run("save", async () => {
               const result = await api<{ schedule: StaffSchedule }>("/api/admin/staff-schedules/day", { method: "PUT", body: {
@@ -517,6 +686,8 @@ export function AdminStaffScheduleManagement() {
                 segments: dayType === "day_off" || dayType === "paid_leave" ? [] : segments,
               } });
               setSchedule(result.schedule);
+              setDayEditorDirty(false);
+              setDraftReview(null);
               setMessage(`${selectedStaff.name}の${formatDate(selectedDate)}を保存しました。`);
             })}>{busy === "save" ? "保存中..." : "日別シフトを保存"}</button>
             {dayType === "other" ? <p className="admin-schedule-note">「その他」の詳細備考は将来追加します。勤務区分がある場合は予定実労働時間と連続勤務へ含まれます。</p> : null}

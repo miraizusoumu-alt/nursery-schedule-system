@@ -294,6 +294,9 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(staffSchedule, /この内容で下書きを作成/);
   assert.match(staffSchedule, /自動作成上の未解決事項はありません/);
   assert.match(staffSchedule, /保育従事者不足|保育士資格者不足|休憩未配置/);
+  assert.match(staffSchedule, /現在の下書きを再チェック/);
+  assert.match(staffSchedule, /未保存の変更があります。保存してから再チェックしてください/);
+  assert.match(staffSchedule, /配置不足 \/ 保育従事者|勤務条件|現在の下書きに確認が必要な項目はありません/);
   assert.match(childManagement, /＋ 園児を新規登録|園児を選択してください|基本利用予定|基本利用パターン履歴/);
   assert.doesNotMatch(childManagement, /<span>変更理由<\/span>/);
   assert.match(childManagement, /保護者ログインアカウント未作成/);
@@ -318,6 +321,7 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(staffScheduleHttp, /assertCsrf/);
   assert.match(staffScheduleHttp, /\/api\/admin\/staff-schedules\/automatic-preview/);
   assert.match(staffScheduleHttp, /\/api\/admin\/staff-schedules\/automatic-draft/);
+  assert.match(staffScheduleHttp, /\/api\/admin\/staff-schedules\/draft-review/);
   assert.match(gateway, /handleAdminScheduleApiRequest/);
   assert.match(gateway, /handleStaffScheduleApiRequest/);
   assert.match(gateway, /administratorQuarterHourStaffingRequirements/);

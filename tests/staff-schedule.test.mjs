@@ -893,6 +893,115 @@ test("saves unresolved automatic results as a draft without persisting the unres
   }
 });
 
+test("rechecks only the saved current draft without writing and reflects later manual adjustments", async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), "nursery-current-draft-review-"));
+  const database = openDatabase(resolve(directory, "draft-review.sqlite"));
+  try {
+    await applyMigrations(database);
+    database.prepare(
+      "INSERT INTO administrators (id, login_id, display_name, role, status) VALUES (?, ?, ?, 'normal', 'active')",
+    ).run("admin-review", "review-admin", "架空 再チェック管理者");
+    insertAutomaticStaff(database, "admin-review", "staff-a", "ST0001");
+    insertAutomaticStaff(database, "admin-review", "staff-b", "ST0002");
+    const actor = { type: "administrator", id: "admin-review", role: "normal", mustChangePassword: false };
+    const requirements = quarterHourRequirements("2026-09-07", "09:00", "10:00", 1, 1);
+    const service = createStaffScheduleService({
+      database,
+      now: () => new Date("2026-08-26T02:00:00.000Z"),
+      automaticRequirementSlotsProvider: automaticRequirementSlotsProvider(requirements),
+    });
+    let schedule = service.createMonthlySchedule(actor, { targetMonth: "2026-09" });
+    const firstVersionId = schedule.viewedVersion.id;
+    schedule = service.saveScheduleDay(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+      staffId: "staff-a",
+      date: "2026-09-07",
+      dayType: "work",
+      segments: [{ startTime: "09:00", endTime: "10:00", activityType: "childcare" }],
+    });
+    service.saveScheduleDay(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+      staffId: "staff-b",
+      date: "2026-09-07",
+      dayType: "day_off",
+      segments: [],
+    });
+    const beforeReview = {
+      months: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count,
+      versions: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count,
+      days: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_days").get().count,
+      segments: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_segments").get().count,
+      operations: database.prepare("SELECT COUNT(*) AS count FROM operation_logs").get().count,
+    };
+    const cleanReview = service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+    });
+    assert.equal(cleanReview.versionId, firstVersionId);
+    assert.equal(cleanReview.issues.childcareStaffing.length, 0);
+    assert.equal(cleanReview.issues.licensedStaffing.length, 0);
+    assert.deepEqual({
+      months: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_months").get().count,
+      versions: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_versions").get().count,
+      days: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_days").get().count,
+      segments: database.prepare("SELECT COUNT(*) AS count FROM staff_schedule_segments").get().count,
+      operations: database.prepare("SELECT COUNT(*) AS count FROM operation_logs").get().count,
+    }, beforeReview, "a draft review is read-only and does not create an operation log");
+
+    service.confirmMonthlySchedule(actor, { targetMonth: "2026-09", versionId: firstVersionId });
+    assert.throws(() => service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+    }), (error) => error.code === "STAFF_SCHEDULE_NOT_DRAFT");
+    schedule = service.createRevisionDraft(actor, { targetMonth: "2026-09" });
+    const secondVersionId = schedule.viewedVersion.id;
+    service.saveScheduleDay(actor, {
+      targetMonth: "2026-09",
+      versionId: secondVersionId,
+      staffId: "staff-a",
+      date: "2026-09-07",
+      dayType: "day_off",
+      segments: [],
+    });
+    const changedReview = service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-09",
+      versionId: secondVersionId,
+    });
+    assert.equal(changedReview.issues.childcareStaffing.length, 1);
+    assert.equal(changedReview.issues.licensedStaffing.length, 1);
+    assert.throws(() => service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+    }), (error) => error.code === "STAFF_SCHEDULE_VERSION_CHANGED");
+    const oldVersion = service.scheduleDashboard(actor, {
+      targetMonth: "2026-09",
+      versionId: firstVersionId,
+      selectedDate: "2026-09-07",
+    });
+    assert.equal(oldVersion.staff.find((staff) => staff.id === "staff-a").selectedDay.dayType, "work");
+
+    service.saveScheduleDay(actor, {
+      targetMonth: "2026-09",
+      versionId: secondVersionId,
+      staffId: "staff-b",
+      date: "2026-09-07",
+      dayType: "work",
+      segments: [{ startTime: "09:00", endTime: "10:00", activityType: "childcare" }],
+    });
+    const improvedReview = service.recheckCurrentDraft(actor, {
+      targetMonth: "2026-09",
+      versionId: secondVersionId,
+    });
+    assert.equal(improvedReview.issues.childcareStaffing.length, 0);
+    assert.equal(improvedReview.issues.licensedStaffing.length, 0);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("rejects structurally invalid automatic results before saving and rolls back an insert failure", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "nursery-auto-rollback-"));
   const database = openDatabase(resolve(directory, "automatic-rollback.sqlite"));
@@ -987,6 +1096,10 @@ test("connects administrator-only automatic preview and explicit draft APIs", as
       calls.push(["draft", receivedActor.id, body.targetMonth]);
       return { schedule: { targetMonth: body.targetMonth }, unresolved: { hasUnresolved: false } };
     },
+    recheckCurrentDraft(receivedActor, body) {
+      calls.push(["review", receivedActor.id, body.targetMonth]);
+      return { targetMonth: body.targetMonth, versionId: body.versionId, issues: {}, hasIssues: false };
+    },
   };
   const request = (path) => new Request(`http://localhost${path}`, {
     method: "POST",
@@ -1010,9 +1123,16 @@ test("connects administrator-only automatic preview and explicit draft APIs", as
     { service, authService },
   );
   assert.equal(draftResponse.status, 201);
+  const reviewResponse = await handleStaffScheduleApiRequest(
+    request("/api/admin/staff-schedules/draft-review"),
+    { service, authService },
+  );
+  assert.equal(reviewResponse.status, 200);
+  assert.equal((await reviewResponse.json()).review.targetMonth, "2026-09");
   assert.deepEqual(calls, [
     ["preview", "admin-auto", "2026-09"],
     ["draft", "admin-auto", "2026-09"],
+    ["review", "admin-auto", "2026-09"],
   ]);
 
   const unauthenticated = await handleStaffScheduleApiRequest(
