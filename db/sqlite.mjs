@@ -55,6 +55,7 @@ export const REQUIRED_APPLICATION_TABLES_BY_MIGRATION = {
   ],
   "0009_exotic_skin.sql": ["staff_schedule_preferences"],
   "0010_careless_leper_queen.sql": [],
+  "0011_melted_surge.sql": ["staff_weekly_availability_candidates"],
 };
 
 export const REQUIRED_APPLICATION_TABLES = [

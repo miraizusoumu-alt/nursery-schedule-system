@@ -61,6 +61,37 @@ function quarterHourRequirements(date, startTime, count) {
   });
 }
 
+function withFridayAvailabilityCandidates(profile) {
+  return {
+    ...profile,
+    workConditions: profile.workConditions.map((condition) => ({
+      ...condition,
+      availability: Array.from({ length: 7 }, (_, weekday) => ({
+        weekday,
+        available: weekday === 5,
+        startTime: weekday === 5 ? "10:00" : null,
+        endTime: weekday === 5 ? "14:30" : null,
+        candidates: weekday === 5 ? [
+          {
+            candidateId: "friday-morning",
+            candidateOrder: 0,
+            startTime: "10:00",
+            endTime: "14:30",
+            weekOrdinals: null,
+          },
+          {
+            candidateId: "friday-afternoon",
+            candidateOrder: 1,
+            startTime: "15:00",
+            endTime: "18:30",
+            weekOrdinals: null,
+          },
+        ] : [],
+      })),
+    })),
+  };
+}
+
 test("assigns nobody when a quarter-hour slot requires no staff", () => {
   const result = calculateAutomaticChildcareShift([requirement("09:00", 0)], [staff("A")]);
   assert.equal(result.slots[0].assignedChildcareWorkerCount, 0);
@@ -156,6 +187,76 @@ test("prioritizes a daily work-time preference over an otherwise continuing cand
   assert.deepEqual(result.slots[0].assignedStaff.map((entry) => entry.staffId), ["A"]);
   assert.deepEqual(result.slots[1].assignedStaff.map((entry) => entry.staffId), ["B"]);
   assert.equal(result.slots[1].assignedStaff[0].hasWorkTimePreference, true);
+});
+
+test("selects exactly one alternative availability candidate from demand and qualifications", () => {
+  const date = "2026-09-11";
+  const profile = withFridayAvailabilityCandidates(staff("ALT"));
+  const morningDemand = calculateAutomaticChildcareShift([
+    requirement("10:00", 1, 0, date),
+    requirement("10:15", 1, 0, date),
+    requirement("15:00", 1, 0, date),
+  ], [profile]);
+  assert.equal(morningDemand.selectedAvailabilityCandidates[0].candidateId, "friday-morning");
+  assert.deepEqual(morningDemand.slots.map((slot) => slot.assignedStaff.length), [1, 1, 0]);
+
+  const afternoonDemand = calculateAutomaticChildcareShift([
+    requirement("10:00", 1, 0, date),
+    requirement("15:00", 1, 0, date),
+    requirement("15:15", 1, 0, date),
+    requirement("15:30", 1, 0, date),
+  ], [profile]);
+  assert.equal(afternoonDemand.selectedAvailabilityCandidates[0].candidateId, "friday-afternoon");
+  assert.deepEqual(afternoonDemand.slots.map((slot) => slot.assignedStaff.length), [0, 1, 1, 1]);
+
+  const licensedAfternoon = calculateAutomaticChildcareShift([
+    requirement("10:00", 1, 0, date),
+    requirement("10:15", 1, 0, date),
+    requirement("15:00", 1, 1, date),
+  ], [profile]);
+  assert.equal(licensedAfternoon.selectedAvailabilityCandidates[0].candidateId, "friday-afternoon");
+  assert.deepEqual(licensedAfternoon.slots.map((slot) => slot.assignedStaff.length), [0, 0, 1]);
+});
+
+test("coordinates alternative selections across staff instead of concentrating everyone in one period", () => {
+  const date = "2026-09-11";
+  const profiles = [
+    withFridayAvailabilityCandidates(staff("A", { staffCode: "ST0001" })),
+    withFridayAvailabilityCandidates(staff("B", { staffCode: "ST0002" })),
+  ];
+  const slots = [
+    requirement("10:00", 1, 0, date),
+    requirement("15:00", 1, 0, date),
+  ];
+
+  const first = calculateAutomaticChildcareShift(slots, profiles);
+  const repeated = calculateAutomaticChildcareShift([...slots].reverse(), [...profiles].reverse());
+
+  assert.deepEqual(first.selectedAvailabilityCandidates.map((entry) => [entry.staffId, entry.candidateId]), [
+    ["A", "friday-morning"],
+    ["B", "friday-afternoon"],
+  ]);
+  assert.deepEqual(first.slots.map((slot) => slot.assignedStaff.map((entry) => entry.staffId)), [["A"], ["B"]]);
+  assert.deepEqual(first, repeated);
+});
+
+test("uses a date-specific work-time preference instead of weekly alternatives", () => {
+  const date = "2026-09-11";
+  const profile = withFridayAvailabilityCandidates(staff("ALT-PREF", {
+    schedulePreferences: [{
+      date,
+      preferenceType: "work_time",
+      startTime: "12:00",
+      endTime: "13:00",
+    }],
+  }));
+  const result = calculateAutomaticChildcareShift([
+    requirement("10:00", 1, 0, date),
+    requirement("12:00", 1, 0, date),
+    requirement("15:00", 1, 0, date),
+  ], [profile]);
+  assert.deepEqual(result.selectedAvailabilityCandidates, []);
+  assert.deepEqual(result.slots.map((slot) => slot.assignedStaff.length), [0, 1, 0]);
 });
 
 test("allows a sixth work day but excludes seventh days and existing non-work days", () => {

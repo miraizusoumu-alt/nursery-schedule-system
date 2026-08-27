@@ -227,6 +227,26 @@ export const staffWeeklyAvailability = sqliteTable(
   ],
 );
 
+export const staffWeeklyAvailabilityCandidates = sqliteTable(
+  "staff_weekly_availability_candidates",
+  {
+    workConditionVersionId: text("work_condition_version_id").notNull().references(() => staffWorkConditionVersions.id, { onDelete: "cascade" }),
+    weekday: integer("weekday").notNull(),
+    candidateOrder: integer("candidate_order").notNull(),
+    startTime: text("start_time").notNull(),
+    endTime: text("end_time").notNull(),
+    weekMask: integer("week_mask").notNull().default(31),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workConditionVersionId, table.weekday, table.candidateOrder] }),
+    check("chk_staff_availability_candidates_weekday", sql`${table.weekday} between 0 and 6`),
+    check("chk_staff_availability_candidates_order", sql`${table.candidateOrder} >= 0`),
+    check("chk_staff_availability_candidates_times", sql`${table.startTime} < ${table.endTime}`),
+    check("chk_staff_availability_candidates_week_mask", sql`${table.weekMask} between 1 and 31`),
+  ],
+);
+
 export const staffScheduleMonths = sqliteTable(
   "staff_schedule_months",
   {

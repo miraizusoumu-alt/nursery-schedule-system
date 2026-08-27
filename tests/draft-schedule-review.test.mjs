@@ -25,7 +25,7 @@ function profile(id, staffCode, qualification = "licensed_nursery_teacher", opti
       validTo: null,
       employmentType: options.employmentType ?? "常勤",
       ...(options.workCondition ?? {}),
-      availability: Array.from({ length: 7 }, (_, weekday) => ({
+      availability: options.availability ?? Array.from({ length: 7 }, (_, weekday) => ({
         weekday,
         available: true,
         startTime: "06:30",
@@ -133,6 +133,56 @@ test("rechecks saved staffing, work conditions, limits, consecutive work, and br
   );
   assert.equal(review.hasIssues, true);
   assert.deepEqual({ profiles, currentDays, requirementSource }, before);
+});
+
+test("reports mixed alternative availability candidates and week-specific outside work as warnings", () => {
+  const availability = Array.from({ length: 7 }, (_, weekday) => ({
+    weekday,
+    available: weekday === 5,
+    startTime: weekday === 5 ? "10:00" : null,
+    endTime: weekday === 5 ? "14:30" : null,
+    candidates: weekday === 5 ? [
+      {
+        candidateId: "friday-morning",
+        candidateOrder: 0,
+        startTime: "10:00",
+        endTime: "14:30",
+        weekOrdinals: null,
+      },
+      {
+        candidateId: "friday-afternoon",
+        candidateOrder: 1,
+        startTime: "15:00",
+        endTime: "18:30",
+        weekOrdinals: [2, 4],
+      },
+    ] : [],
+  }));
+  const staff = profile("staff-alt", "ST0090", "licensed_nursery_teacher", {
+    employmentType: "非常勤",
+    availability,
+  });
+  const review = evaluateCurrentDraftSchedule({
+    targetMonth: "2026-09",
+    requirementSource: { period: null, slots: [] },
+    staffProfiles: [staff],
+    currentDays: [
+      day("staff-alt", "2026-09-11", [
+        childcare("10:00", "12:00"),
+        childcare("15:00", "17:00"),
+      ]),
+      day("staff-alt", "2026-09-18", [childcare("15:00", "16:00")]),
+    ],
+  });
+  assert.equal(review.issues.workConditions.some((issue) => (
+    issue.code === "MULTIPLE_AVAILABILITY_CANDIDATES_USED" && issue.date === "2026-09-11"
+  )), true);
+  assert.equal(review.issues.workConditions.some((issue) => (
+    issue.code === "OUTSIDE_AVAILABLE_TIME" && issue.date === "2026-09-18"
+  )), true);
+  assert.equal(review.confirmation.yellowIssues.some((issue) => (
+    issue.code === "MULTIPLE_AVAILABILITY_CANDIDATES_USED"
+  )), true);
 });
 
 test("reports a clean current draft when staffing and rules are satisfied", () => {

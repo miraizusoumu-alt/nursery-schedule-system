@@ -3524,6 +3524,64 @@ h2 {
   align-self: center;
 }
 
+.admin-availability-day {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.admin-availability-day-heading,
+.admin-availability-candidate-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.admin-availability-candidates {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-availability-candidate {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px 12px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-availability-candidate-heading,
+.admin-availability-weeks {
+  grid-column: 1 / -1;
+}
+
+.admin-availability-candidate-heading strong {
+  font-size: 0.9rem;
+}
+
+.admin-availability-weeks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 0 0;
+  border: 0;
+}
+
+.admin-availability-weeks legend {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-availability-add {
+  justify-self: start;
+}
+
 .admin-pattern-history {
   display: grid;
   gap: 8px;
@@ -3610,6 +3668,10 @@ h2 {
   }
 
   .admin-part-time-conditions .admin-child-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-availability-candidate {
     grid-template-columns: minmax(0, 1fr);
   }
 

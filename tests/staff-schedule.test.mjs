@@ -567,6 +567,16 @@ test("stores independent staff day-off and work-time preferences with effective 
       available: true,
       startTime: "08:00",
       endTime: "17:00",
+      candidates: [{
+        candidateId: "preference:2026-09-10",
+        candidateOrder: 0,
+        startTime: "08:00",
+        endTime: "17:00",
+        startMinutes: 480,
+        endMinutes: 1020,
+        weekMask: 31,
+        weekOrdinals: null,
+      }],
     });
 
     service.saveStaffPreference(actor, {

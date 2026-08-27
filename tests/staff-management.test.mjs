@@ -216,9 +216,14 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
       validFrom: "2026-07-01", validTo: "2026-12-31", employmentType: "非常勤",
       ...partTimeConditions(), availability: allWeekdays(),
     }), "OVERLAPPING_WORK_CONDITION");
+    const multipleAvailability = allWeekdays({ startTime: "08:30", endTime: "17:30" });
+    multipleAvailability[1].candidates = [
+      { startTime: "10:00", endTime: "14:30", weekOrdinals: null },
+      { startTime: "15:00", endTime: "18:30", weekOrdinals: [2, 4] },
+    ];
     const management = service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2026-10-01", employmentType: "常勤", monthlyMinutesLimit: 9600,
-      maxConsecutiveDays: 5, availability: allWeekdays({ startTime: "08:30", endTime: "17:30" }),
+      maxConsecutiveDays: 5, availability: multipleAvailability,
     });
     assert.equal(management.staff[0].conditions.length, 2);
     assert.equal(management.staff[0].conditions[0].employmentType, "非常勤");
@@ -232,11 +237,18 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
     }, partTimeConditions());
     assert.equal(management.staff[0].conditions[1].availability.length, 7);
     assert.deepEqual(management.staff[0].conditions[1].availability[0], {
-      weekday: 0, available: false, startTime: null, endTime: null,
+      weekday: 0, available: false, startTime: null, endTime: null, candidates: [],
     });
     assert.deepEqual(management.staff[0].conditions[1].availability[1], {
-      weekday: 1, available: true, startTime: "08:30", endTime: "17:30",
+      weekday: 1, available: true, startTime: "10:00", endTime: "14:30",
+      candidates: [
+        { candidateOrder: 0, startTime: "10:00", endTime: "14:30", weekOrdinals: null },
+        { candidateOrder: 1, startTime: "15:00", endTime: "18:30", weekOrdinals: [2, 4] },
+      ],
     });
+    assert.equal(database.prepare(
+      "SELECT COUNT(*) AS count FROM staff_weekly_availability_candidates WHERE work_condition_version_id = ?",
+    ).get(management.staff[0].conditions[1].id).count, 2);
 
     expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2027-04-01", validTo: "2027-03-31", employmentType: "常勤", availability: allWeekdays(),

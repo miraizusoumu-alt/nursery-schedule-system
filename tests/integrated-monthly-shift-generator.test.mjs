@@ -499,6 +499,67 @@ test("distinguishes part-time weekly limits below and within while enforcing wee
   ));
 });
 
+test("selects one Friday alternative while preserving a three-to-five-hour part-time contract", () => {
+  const date = "2026-09-11";
+  const profile = staff("PT-ALT", {
+    employmentType: "非常勤",
+    workCondition: partTimeContract({
+      weeklyWorkDaysMax: 3,
+      dailyWorkMinutesMin: 3 * 60,
+      dailyWorkMinutesMax: 5 * 60,
+    }),
+    availableScheduleMonths: ["2026-08", "2026-10"],
+  });
+  profile.workConditions[0].availability = Array.from({ length: 7 }, (_, weekday) => ({
+    weekday,
+    available: weekday === 5,
+    startTime: weekday === 5 ? "10:00" : null,
+    endTime: weekday === 5 ? "14:30" : null,
+    candidates: weekday === 5 ? [
+      {
+        candidateId: "friday-morning",
+        candidateOrder: 0,
+        startTime: "10:00",
+        endTime: "14:30",
+        weekOrdinals: null,
+      },
+      {
+        candidateId: "friday-afternoon",
+        candidateOrder: 1,
+        startTime: "15:00",
+        endTime: "18:30",
+        weekOrdinals: null,
+      },
+    ] : [],
+  }));
+  const requirementSlots = [
+    ...quarterHourRequirements(date, "10:00", 18),
+    ...quarterHourRequirements(date, "15:00", 14),
+  ];
+
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [profile],
+    requirementSlots,
+  });
+  const selected = result.placement.selectedAvailabilityCandidates.find((entry) => entry.staffId === profile.id);
+  const assignedSlots = result.placement.slots.filter((slot) => slot.assignedStaff.some((entry) => (
+    entry.staffId === profile.id
+  )));
+
+  assert.equal(selected.candidateId, "friday-morning");
+  assert.equal(assignedSlots.length * 15, 270);
+  assert.equal(assignedSlots.every((slot) => slot.startTime >= "10:00" && slot.endTime <= "14:30"), true);
+  assert.equal(result.daysOffPlan.unresolvedConstraints.some((entry) => (
+    entry.staffId === profile.id && [
+      "PART_TIME_DAILY_MINIMUM_MINUTES_UNMET",
+      "PART_TIME_DAILY_WORK_MINUTES_EXCEEDED",
+      "PART_TIME_WEEKLY_WORK_DAYS_EXCEEDED",
+      "PART_TIME_WEEKLY_WORK_MINUTES_EXCEEDED",
+    ].includes(entry.code)
+  )), false);
+});
+
 test("does not keep short part-time assignments unless a shorter daily preference explicitly allows them", () => {
   const date = "2026-09-14";
   const contract = partTimeContract({ dailyWorkMinutesMin: 180, dailyWorkMinutesMax: 300 });

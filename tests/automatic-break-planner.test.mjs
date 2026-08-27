@@ -385,6 +385,47 @@ test("uses a licensed relief worker when a licensed teacher takes a break", () =
   assert.equal(result.shortagesAfterBreaks.length, 0);
 });
 
+test("keeps a relief worker inside the availability candidate selected for that day", () => {
+  const profiles = [staff("A"), staff("B"), staff("C")];
+  const mondayAvailability = profiles[2].workConditions[0].availability.find((entry) => entry.weekday === 1);
+  mondayAvailability.startTime = "09:00";
+  mondayAvailability.endTime = "14:00";
+  mondayAvailability.candidates = [
+    {
+      candidateId: "C-morning",
+      candidateOrder: 1,
+      startTime: "09:00",
+      endTime: "11:00",
+      weekOrdinals: [1, 2, 3, 4, 5],
+    },
+    {
+      candidateId: "C-afternoon",
+      candidateOrder: 2,
+      startTime: "12:00",
+      endTime: "14:00",
+      weekOrdinals: [1, 2, 3, 4, 5],
+    },
+  ];
+  const slots = requirements("12:00", "13:00");
+  const placement = manualPlacement(slots, profiles, ["A", "B"]);
+  placement.selectedAvailabilityCandidates = [{
+    staffId: "C",
+    date: "2026-09-07",
+    candidateId: "C-morning",
+  }];
+
+  const result = planAutomaticBreaks({
+    requirementSlots: slots,
+    placement,
+    staffProfiles: profiles,
+    breakRequirements: [{ staffId: "A", date: "2026-09-07", requiredBreakMinutes: 60 }],
+  });
+
+  assert.equal(result.breakOutcomes[0].placementSucceeded, false);
+  assert.equal(result.breakOutcomes[0].unresolvedReasonCode, "BREAK_COVERAGE_UNAVAILABLE");
+  assert.deepEqual(result.reliefAssignments, []);
+});
+
 test("rejects day-off, outside-preference, and seventh-day relief candidates", () => {
   const previousSix = Array.from({ length: 6 }, (_, index) => {
     return scheduleDay("E", `2026-09-${String(index + 1).padStart(2, "0")}`);

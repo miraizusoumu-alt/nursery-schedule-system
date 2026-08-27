@@ -174,6 +174,16 @@ test("uses day-specific preferences before weekly availability for automatic pla
   assert.equal(inside.hasWorkTimePreference, true);
   assert.deepEqual(inside.effectiveAvailability, {
     source: "preference", available: true, startTime: "10:00", endTime: "16:00",
+    candidates: [{
+      candidateId: "preference:2026-05-11",
+      candidateOrder: 0,
+      startTime: "10:00",
+      endTime: "16:00",
+      startMinutes: 600,
+      endMinutes: 960,
+      weekMask: 31,
+      weekOrdinals: null,
+    }],
   });
   for (const slot of [
     { date: "2026-05-11", startTime: "09:45", endTime: "10:00" },
@@ -206,6 +216,56 @@ test("uses day-specific preferences before weekly availability for automatic pla
   assert.equal(dayOff.automaticPlacementEligible, false);
   assert.equal(dayOff.hasDayOffPreference, true);
   assert.ok(dayOff.exclusionReasons.includes("PREFERENCE_DAY_OFF"));
+});
+
+test("activates an alternative only on the configured weekday occurrences", () => {
+  const profile = staff({
+    employmentEndDate: null,
+    validQualifications: [{
+      type: "licensed_nursery_teacher",
+      validFrom: "2026-01-01",
+      validTo: null,
+    }],
+    workConditions: [{
+      validFrom: "2026-01-01",
+      validTo: null,
+      employmentType: "非常勤",
+      availability: [{
+        weekday: 3,
+        available: true,
+        startTime: "10:00",
+        endTime: "14:30",
+        candidates: [
+          {
+            candidateId: "wednesday-regular",
+            candidateOrder: 0,
+            startTime: "10:00",
+            endTime: "14:30",
+            weekOrdinals: null,
+          },
+          {
+            candidateId: "wednesday-second-fourth",
+            candidateOrder: 1,
+            startTime: "15:00",
+            endTime: "18:30",
+            weekOrdinals: [2, 4],
+          },
+        ],
+      }],
+    }],
+  });
+  const secondWednesday = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(profile, {
+    date: "2026-09-09", startTime: "15:00", endTime: "15:15",
+  });
+  const thirdWednesday = evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(profile, {
+    date: "2026-09-16", startTime: "15:00", endTime: "15:15",
+  });
+  assert.equal(secondWednesday.automaticPlacementEligible, true);
+  assert.equal(thirdWednesday.automaticPlacementEligible, false);
+  assert.ok(thirdWednesday.exclusionReasons.includes("OUTSIDE_AVAILABLE_TIME"));
+  assert.equal(evaluateStaffAutomaticPlacementEligibilityForQuarterHourSlot(profile, {
+    date: "2026-09-16", startTime: "10:00", endTime: "10:15",
+  }).automaticPlacementEligible, true);
 });
 
 test("allows the sixth work day and excludes a seventh across month boundaries", () => {

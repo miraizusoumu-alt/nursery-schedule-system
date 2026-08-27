@@ -9,6 +9,14 @@ type Availability = {
   available: boolean;
   startTime: string | null;
   endTime: string | null;
+  candidates: AvailabilityCandidate[];
+};
+
+type AvailabilityCandidate = {
+  candidateOrder?: number;
+  startTime: string;
+  endTime: string;
+  weekOrdinals: number[] | null;
 };
 
 type Qualification = {
@@ -111,7 +119,16 @@ function defaultAvailability(): Availability[] {
     available: value !== 0,
     startTime: value !== 0 ? "06:45" : null,
     endTime: value !== 0 ? "20:15" : null,
+    candidates: value !== 0
+      ? [{ startTime: "06:45", endTime: "20:15", weekOrdinals: null }]
+      : [],
   }));
+}
+
+function candidateWeekLabel(candidate: AvailabilityCandidate) {
+  return candidate.weekOrdinals === null
+    ? "毎週"
+    : candidate.weekOrdinals.map((ordinal) => `第${ordinal}`).join("・");
 }
 
 function formatDateTime(value: string) {
@@ -207,8 +224,16 @@ export function AdminStaffManagement() {
     setDailyWorkHoursMin(hoursValue(condition?.dailyWorkMinutesMin));
     setDailyWorkHoursMax(hoursValue(condition?.dailyWorkMinutesMax));
     setAvailability(condition
-      ? weekdays.map(({ value }) => condition.availability.find((entry) => entry.weekday === value)
-        ?? { weekday: value, available: false, startTime: null, endTime: null })
+      ? weekdays.map(({ value }) => {
+          const entry = condition.availability.find((availabilityEntry) => availabilityEntry.weekday === value);
+          if (!entry) return { weekday: value, available: false, startTime: null, endTime: null, candidates: [] };
+          const candidates = entry.candidates?.length
+            ? entry.candidates
+            : entry.available && entry.startTime && entry.endTime
+              ? [{ startTime: entry.startTime, endTime: entry.endTime, weekOrdinals: null }]
+              : [];
+          return { ...entry, candidates };
+        })
       : defaultAvailability());
     setConditionDirty(false);
   }, []);
@@ -286,13 +311,81 @@ export function AdminStaffManagement() {
     setAvailability((current) => current.map((entry) => {
       if (entry.weekday !== weekday) return entry;
       const available = patch.available ?? entry.available;
+      const candidates = patch.candidates ?? (entry.candidates.length > 0
+        ? entry.candidates
+        : [{ startTime: "09:00", endTime: "17:00", weekOrdinals: null }]);
       return {
         ...entry,
         ...patch,
         available,
-        startTime: available ? patch.startTime ?? entry.startTime ?? "09:00" : null,
-        endTime: available ? patch.endTime ?? entry.endTime ?? "17:00" : null,
+        startTime: available ? candidates[0].startTime : null,
+        endTime: available ? candidates[0].endTime : null,
+        candidates,
       };
+    }));
+  }
+
+  function updateAvailabilityCandidate(
+    weekday: number,
+    candidateIndex: number,
+    patch: Partial<AvailabilityCandidate>,
+  ) {
+    setAvailability((current) => current.map((entry) => {
+      if (entry.weekday !== weekday) return entry;
+      const candidates = entry.candidates.map((candidate, index) => (
+        index === candidateIndex ? { ...candidate, ...patch } : candidate
+      ));
+      return {
+        ...entry,
+        candidates,
+        startTime: candidates[0]?.startTime ?? null,
+        endTime: candidates[0]?.endTime ?? null,
+      };
+    }));
+  }
+
+  function addAvailabilityCandidate(weekday: number) {
+    setAvailability((current) => current.map((entry) => {
+      if (entry.weekday !== weekday) return entry;
+      const candidates = [
+        ...entry.candidates,
+        { startTime: "15:00", endTime: "18:30", weekOrdinals: null },
+      ];
+      return {
+        ...entry,
+        available: true,
+        startTime: candidates[0].startTime,
+        endTime: candidates[0].endTime,
+        candidates,
+      };
+    }));
+  }
+
+  function removeAvailabilityCandidate(weekday: number, candidateIndex: number) {
+    setAvailability((current) => current.map((entry) => {
+      if (entry.weekday !== weekday || entry.candidates.length <= 1) return entry;
+      const candidates = entry.candidates.filter((_, index) => index !== candidateIndex);
+      return {
+        ...entry,
+        candidates,
+        startTime: candidates[0].startTime,
+        endTime: candidates[0].endTime,
+      };
+    }));
+  }
+
+  function toggleCandidateWeek(weekday: number, candidateIndex: number, ordinal: number, checked: boolean) {
+    setAvailability((current) => current.map((entry) => {
+      if (entry.weekday !== weekday) return entry;
+      const candidates = entry.candidates.map((candidate, index) => {
+        if (index !== candidateIndex) return candidate;
+        const currentWeeks = candidate.weekOrdinals ?? [1, 2, 3, 4, 5];
+        const nextWeeks = checked
+          ? [...new Set([...currentWeeks, ordinal])].sort((left, right) => left - right)
+          : currentWeeks.filter((week) => week !== ordinal);
+        return nextWeeks.length > 0 ? { ...candidate, weekOrdinals: nextWeeks } : candidate;
+      });
+      return { ...entry, candidates };
     }));
   }
 
@@ -493,14 +586,52 @@ export function AdminStaffManagement() {
               </div> : null}
               <div className="admin-pattern-grid">
                 {availability.map((entry) => (
-                  <div key={entry.weekday} className="admin-pattern-row">
-                    <strong>{weekdays.find((weekday) => weekday.value === entry.weekday)?.label}</strong>
-                    <label className="parent-check-row"><input type="checkbox" checked={entry.available} onChange={(event) => {
-                      const checked = event.currentTarget.checked;
-                      markConditionChanged(() => updateAvailability(entry.weekday, { available: checked }));
-                    }} /><span>この曜日は勤務可能</span></label>
-                    <label><span>開始時刻</span><select disabled={!entry.available} value={entry.startTime ?? "09:00"} onChange={(event) => markConditionChanged(() => updateAvailability(entry.weekday, { startTime: event.currentTarget.value }))}>{staffTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
-                    <label><span>終了時刻</span><select disabled={!entry.available} value={entry.endTime ?? "17:00"} onChange={(event) => markConditionChanged(() => updateAvailability(entry.weekday, { endTime: event.currentTarget.value }))}>{staffTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                  <div key={entry.weekday} className="admin-pattern-row admin-availability-day">
+                    <div className="admin-availability-day-heading">
+                      <strong>{weekdays.find((weekday) => weekday.value === entry.weekday)?.label}</strong>
+                      <label className="parent-check-row"><input type="checkbox" checked={entry.available} onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        markConditionChanged(() => updateAvailability(entry.weekday, { available: checked }));
+                      }} /><span>この曜日は勤務可能</span></label>
+                    </div>
+                    {entry.available ? <>
+                      <div className="admin-availability-candidates">
+                        {entry.candidates.map((candidate, candidateIndex) => (
+                          <div className="admin-availability-candidate" key={`${entry.weekday}-${candidateIndex}`}>
+                            <div className="admin-availability-candidate-heading">
+                              <strong>勤務可能時間候補 {candidateIndex + 1}</strong>
+                              {entry.candidates.length > 1 ? <button type="button" className="secondary" onClick={() => {
+                                markConditionChanged(() => removeAvailabilityCandidate(entry.weekday, candidateIndex));
+                              }}>候補を削除</button> : null}
+                            </div>
+                            <label><span>開始時刻</span><select value={candidate.startTime} onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              markConditionChanged(() => updateAvailabilityCandidate(entry.weekday, candidateIndex, { startTime: value }));
+                            }}>{staffTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                            <label><span>終了時刻</span><select value={candidate.endTime} onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              markConditionChanged(() => updateAvailabilityCandidate(entry.weekday, candidateIndex, { endTime: value }));
+                            }}>{staffTimeOptions.map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+                            <label><span>適用する週</span><select value={candidate.weekOrdinals === null ? "all" : "selected"} onChange={(event) => {
+                              const value = event.currentTarget.value;
+                              markConditionChanged(() => updateAvailabilityCandidate(entry.weekday, candidateIndex, {
+                                weekOrdinals: value === "all" ? null : [2, 4],
+                              }));
+                            }}><option value="all">毎週</option><option value="selected">指定した週だけ</option></select></label>
+                            {candidate.weekOrdinals !== null ? <fieldset className="admin-availability-weeks">
+                              <legend>有効にする週</legend>
+                              {[1, 2, 3, 4, 5].map((ordinal) => <label className="parent-check-row" key={ordinal}><input type="checkbox" checked={candidate.weekOrdinals?.includes(ordinal) ?? false} onChange={(event) => {
+                                const checked = event.currentTarget.checked;
+                                markConditionChanged(() => toggleCandidateWeek(entry.weekday, candidateIndex, ordinal, checked));
+                              }} /><span>第{ordinal}</span></label>)}
+                            </fieldset> : null}
+                          </div>
+                        ))}
+                      </div>
+                      <button type="button" className="secondary admin-availability-add" onClick={() => {
+                        markConditionChanged(() => addAvailabilityCandidate(entry.weekday));
+                      }}>＋ 勤務可能時間候補を追加</button>
+                    </> : <p className="admin-schedule-note">勤務不可</p>}
                   </div>
                 ))}
               </div>
@@ -541,7 +672,9 @@ export function AdminStaffManagement() {
                   <summary><strong>{condition.employmentType}</strong><span>{condition.validFrom} - {condition.validTo ?? "期限なし"}</span></summary>
                   <p>{formatDateTime(condition.createdAt)} / {condition.createdByAdministratorName}</p>
                   {condition.employmentType === "非常勤" ? <p>週 {formatContractHours(condition.weeklyMinutesLimit)}{condition.weeklyMinutesLimitType === "exclusive" ? "未満" : "以内"} / 週 {condition.preferredWeeklyWorkDaysMin ?? "-"}～{condition.weeklyWorkDaysMax ?? "-"}日 / 1日 {formatContractHours(condition.dailyWorkMinutesMin)}～{formatContractHours(condition.dailyWorkMinutesMax)}</p> : null}
-                  {condition.availability.map((entry) => <div key={entry.weekday}><span>{weekdays.find((weekday) => weekday.value === entry.weekday)?.label}</span><strong>{entry.available ? `${entry.startTime} - ${entry.endTime}` : "勤務不可"}</strong></div>)}
+                  {condition.availability.map((entry) => <div key={entry.weekday}><span>{weekdays.find((weekday) => weekday.value === entry.weekday)?.label}</span><strong>{entry.available
+                    ? entry.candidates.map((candidate, index) => `候補${index + 1} ${candidate.startTime} - ${candidate.endTime}（${candidateWeekLabel(candidate)}）`).join(" / ")
+                    : "勤務不可"}</strong></div>)}
                 </details>
               ))}</div> : <p className="admin-schedule-note">勤務条件は登録されていません。</p>}
             </div>

@@ -133,6 +133,13 @@ test("keeps the existing screens while domain and storage logic stay separated",
   assert.match(staffManagement, /6 \* 60 \+ 30/);
   assert.match(staffManagement, /index \* 15/);
   assert.match(staffManagement, /この曜日は勤務可能/);
+  assert.match(staffManagement, /勤務可能時間候補/);
+  assert.match(staffManagement, /勤務可能時間候補を追加/);
+  assert.match(staffManagement, /適用する週/);
+  assert.match(staffManagement, /毎週/);
+  assert.match(staffManagement, /指定した週だけ/);
+  assert.match(staffManagement, /\[1, 2, 3, 4, 5\]\.map/);
+  assert.match(staffManagement, /第\{ordinal\}/);
   assert.match(staffManagement, /value !== 0/);
   assert.match(staffManagement, /"06:45"/);
   assert.match(staffManagement, /"20:15"/);
