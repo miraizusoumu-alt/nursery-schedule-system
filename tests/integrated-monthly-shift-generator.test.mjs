@@ -49,9 +49,11 @@ function staff(id, options = {}) {
       ? [{ type: qualification, validFrom: "2026-01-01", validTo: null }]
       : [],
     workConditions: [{
+      id: `condition-${id}`,
       validFrom: "2026-01-01",
       validTo: null,
       employmentType: options.employmentType ?? "常勤",
+      ...(options.workCondition ?? {}),
       availability: Array.from({ length: 7 }, (_, weekday) => ({
         weekday,
         available: true,
@@ -61,6 +63,19 @@ function staff(id, options = {}) {
     }],
     schedulePreferences: options.schedulePreferences ?? [],
     scheduledDays: options.scheduledDays ?? [],
+    availableScheduleMonths: options.availableScheduleMonths ?? [],
+  };
+}
+
+function partTimeContract(overrides = {}) {
+  return {
+    weeklyMinutesLimit: 20 * 60,
+    weeklyMinutesLimitType: "inclusive",
+    preferredWeeklyWorkDaysMin: 1,
+    weeklyWorkDaysMax: 5,
+    dailyWorkMinutesMin: 15,
+    dailyWorkMinutesMax: 5 * 60,
+    ...overrides,
   };
 }
 
@@ -388,4 +403,134 @@ test("prioritizes work-time preference dates and reports them when no placement 
   assert.ok(unassigned.daysOffPlan.unresolvedConstraints.some((entry) => {
     return entry.code === "PREFERRED_WORK_DAY_UNASSIGNED" && entry.date === date;
   }));
+});
+
+test("distinguishes part-time weekly limits below and within while enforcing weekly days and daily maximums", () => {
+  const date = "2026-09-10";
+  const exclusiveContract = partTimeContract({ weeklyMinutesLimitType: "exclusive" });
+  const profile = staff("PT", { employmentType: "非常勤", workCondition: exclusiveContract });
+  const baseLimitProfile = {
+    staffId: "PT",
+    targetMonth: "2026-09",
+    dailyLimitMinutes: 480,
+    monthlyLimitMinutes: null,
+    workConditions: profile.workConditions,
+    schedulePreferences: [],
+    existingDays: [
+      { date: "2026-09-07", scheduledWorkMinutes: 480, breakMinutes: 0 },
+      { date: "2026-09-08", scheduledWorkMinutes: 480, breakMinutes: 0 },
+      { date: "2026-09-09", scheduledWorkMinutes: 210, breakMinutes: 0 },
+    ],
+  };
+  const exclusive = calculateAutomaticChildcareShift(
+    quarterHourRequirements(date, "09:00", 2),
+    [profile],
+    { workLimitProfiles: [baseLimitProfile] },
+  );
+  assert.deepEqual(exclusive.slots.map((slot) => slot.assignedChildcareWorkerCount), [1, 0]);
+  assert.ok(exclusive.slots[1].candidateEvaluations[0].exclusionReasons.includes(
+    "PART_TIME_WEEKLY_WORK_LIMIT_EXCEEDED",
+  ));
+
+  const inclusiveProfile = staff("IN", {
+    employmentType: "非常勤",
+    workCondition: partTimeContract(),
+  });
+  const inclusive = calculateAutomaticChildcareShift(
+    [requirement(date, "09:00", 1)],
+    [inclusiveProfile],
+    { workLimitProfiles: [{
+      ...baseLimitProfile,
+      staffId: "IN",
+      workConditions: inclusiveProfile.workConditions,
+      existingDays: [
+        { date: "2026-09-07", scheduledWorkMinutes: 480, breakMinutes: 0 },
+        { date: "2026-09-08", scheduledWorkMinutes: 480, breakMinutes: 0 },
+        { date: "2026-09-09", scheduledWorkMinutes: 225, breakMinutes: 0 },
+      ],
+    }] },
+  );
+  assert.equal(inclusive.slots[0].assignedChildcareWorkerCount, 1);
+
+  const dayLimitedProfile = staff("DAY", {
+    employmentType: "非常勤",
+    workCondition: partTimeContract({ dailyWorkMinutesMax: 180 }),
+  });
+  const dailyLimited = calculateAutomaticChildcareShift(
+    quarterHourRequirements(date, "09:00", 13),
+    [dayLimitedProfile],
+    { workLimitProfiles: [{
+      staffId: "DAY",
+      targetMonth: "2026-09",
+      dailyLimitMinutes: 480,
+      monthlyLimitMinutes: null,
+      workConditions: dayLimitedProfile.workConditions,
+      existingDays: [],
+    }] },
+  );
+  assert.equal(dailyLimited.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount, 0), 12);
+  assert.ok(dailyLimited.slots.at(-1).candidateEvaluations[0].exclusionReasons.includes(
+    "PART_TIME_DAILY_WORK_MINUTES_EXCEEDED",
+  ));
+
+  const daysLimitedProfile = staff("DAYS", {
+    employmentType: "非常勤",
+    workCondition: partTimeContract({ weeklyWorkDaysMax: 3 }),
+  });
+  const daysLimited = calculateAutomaticChildcareShift(
+    [requirement(date, "09:00", 1)],
+    [daysLimitedProfile],
+    { workLimitProfiles: [{
+      staffId: "DAYS",
+      targetMonth: "2026-09",
+      dailyLimitMinutes: 480,
+      monthlyLimitMinutes: null,
+      workConditions: daysLimitedProfile.workConditions,
+      existingDays: [
+        { date: "2026-09-07", scheduledWorkMinutes: 180, breakMinutes: 0 },
+        { date: "2026-09-08", scheduledWorkMinutes: 180, breakMinutes: 0 },
+        { date: "2026-09-09", scheduledWorkMinutes: 180, breakMinutes: 0 },
+      ],
+    }] },
+  );
+  assert.equal(daysLimited.slots[0].assignedChildcareWorkerCount, 0);
+  assert.ok(daysLimited.slots[0].candidateEvaluations[0].exclusionReasons.includes(
+    "PART_TIME_WEEKLY_WORK_DAYS_EXCEEDED",
+  ));
+});
+
+test("does not keep short part-time assignments unless a shorter daily preference explicitly allows them", () => {
+  const date = "2026-09-14";
+  const contract = partTimeContract({ dailyWorkMinutesMin: 180, dailyWorkMinutesMax: 300 });
+  const short = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [staff("PT", {
+      employmentType: "非常勤",
+      workCondition: contract,
+      availableScheduleMonths: ["2026-08", "2026-10"],
+    })],
+    requirementSlots: quarterHourRequirements(date, "09:00", 4),
+  });
+  assert.equal(short.placement.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount, 0), 0);
+  assert.ok(short.placement.slots[0].candidateEvaluations[0].exclusionReasons.includes(
+    "PART_TIME_DAILY_MINIMUM_MINUTES_UNMET",
+  ));
+
+  const preferred = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    staffProfiles: [staff("PT", {
+      employmentType: "非常勤",
+      workCondition: contract,
+      availableScheduleMonths: ["2026-08", "2026-10"],
+      schedulePreferences: [{
+        date,
+        preferenceType: "work_time",
+        startTime: "09:00",
+        endTime: "11:00",
+      }],
+    })],
+    requirementSlots: quarterHourRequirements(date, "09:00", 8),
+  });
+  assert.equal(preferred.placement.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount, 0), 8);
+  assert.ok(!preferred.daysOffPlan.staffPlans[0].finalPlannedDaysOff.includes(date));
 });

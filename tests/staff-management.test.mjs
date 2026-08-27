@@ -19,6 +19,18 @@ function allWeekdays(monday = { startTime: "09:00", endTime: "16:00" }) {
   }));
 }
 
+function partTimeConditions(overrides = {}) {
+  return {
+    weeklyMinutesLimit: 20 * 60,
+    weeklyMinutesLimitType: "exclusive",
+    preferredWeeklyWorkDaysMin: 3,
+    weeklyWorkDaysMax: 4,
+    dailyWorkMinutesMin: 3 * 60,
+    dailyWorkMinutesMax: 5 * 60,
+    ...overrides,
+  };
+}
+
 async function withStaffDatabase(run) {
   const directory = await mkdtemp(resolve(tmpdir(), "nursery-staff-management-"));
   const database = openDatabase(resolve(directory, "staff.sqlite"));
@@ -198,10 +210,11 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
     }).staff[0].id;
     service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2026-04-01", validTo: "2026-09-30", employmentType: "非常勤",
-      monthlyMinutesLimit: 7200, maxConsecutiveDays: 4, availability: allWeekdays(),
+      monthlyMinutesLimit: 7200, maxConsecutiveDays: 4, ...partTimeConditions(), availability: allWeekdays(),
     });
     expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
-      validFrom: "2026-07-01", validTo: "2026-12-31", employmentType: "非常勤", availability: allWeekdays(),
+      validFrom: "2026-07-01", validTo: "2026-12-31", employmentType: "非常勤",
+      ...partTimeConditions(), availability: allWeekdays(),
     }), "OVERLAPPING_WORK_CONDITION");
     const management = service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2026-10-01", employmentType: "常勤", monthlyMinutesLimit: 9600,
@@ -209,6 +222,14 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
     });
     assert.equal(management.staff[0].conditions.length, 2);
     assert.equal(management.staff[0].conditions[0].employmentType, "非常勤");
+    assert.deepEqual({
+      weeklyMinutesLimit: management.staff[0].conditions[0].weeklyMinutesLimit,
+      weeklyMinutesLimitType: management.staff[0].conditions[0].weeklyMinutesLimitType,
+      preferredWeeklyWorkDaysMin: management.staff[0].conditions[0].preferredWeeklyWorkDaysMin,
+      weeklyWorkDaysMax: management.staff[0].conditions[0].weeklyWorkDaysMax,
+      dailyWorkMinutesMin: management.staff[0].conditions[0].dailyWorkMinutesMin,
+      dailyWorkMinutesMax: management.staff[0].conditions[0].dailyWorkMinutesMax,
+    }, partTimeConditions());
     assert.equal(management.staff[0].conditions[1].availability.length, 7);
     assert.deepEqual(management.staff[0].conditions[1].availability[0], {
       weekday: 0, available: false, startTime: null, endTime: null,
@@ -241,11 +262,63 @@ test("preserves work-condition versions and validates periods, weekdays, and tim
     expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
       validFrom: "2027-04-01", employmentType: "短時間", availability: allWeekdays(),
     }), "INVALID_EMPLOYMENT_TYPE");
+    expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
+      validFrom: "2027-04-01", employmentType: "非常勤", availability: allWeekdays(),
+    }), "INVALID_INPUT");
+    expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
+      validFrom: "2027-04-01", employmentType: "非常勤",
+      ...partTimeConditions({ weeklyMinutesLimit: 20 * 60 + 5 }), availability: allWeekdays(),
+    }), "INVALID_INPUT");
+    expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
+      validFrom: "2027-04-01", employmentType: "非常勤",
+      ...partTimeConditions({ preferredWeeklyWorkDaysMin: 5, weeklyWorkDaysMax: 4 }),
+      availability: allWeekdays(),
+    }), "INVALID_INPUT");
+    expectAuthError(() => service.createWorkConditionVersion(actor, staffId, {
+      validFrom: "2027-04-01", employmentType: "非常勤",
+      ...partTimeConditions({ dailyWorkMinutesMin: 315, dailyWorkMinutesMax: 300 }),
+      availability: allWeekdays(),
+    }), "INVALID_INPUT");
     assert.throws(() => database.prepare(
       `INSERT INTO staff_weekly_availability
        (work_condition_version_id, weekday, available, start_time, end_time)
        VALUES (?, 6, 0, '09:00', '16:00')`,
     ).run(management.staff[0].conditions[1].id));
+  });
+});
+
+test("stores representative part-time weekly and daily contract patterns without applying full-time monthly rules", async () => {
+  await withStaffDatabase(async ({ service }) => {
+    const actor = { type: "administrator", id: "normal-staff-admin", role: "normal", mustChangePassword: false };
+    const patterns = [
+      partTimeConditions({ weeklyMinutesLimit: 20 * 60, weeklyMinutesLimitType: "exclusive", weeklyWorkDaysMax: 4 }),
+      partTimeConditions({ weeklyMinutesLimit: 12 * 60, weeklyMinutesLimitType: "inclusive", weeklyWorkDaysMax: 3 }),
+      partTimeConditions({ weeklyMinutesLimit: 30 * 60, weeklyMinutesLimitType: "inclusive", weeklyWorkDaysMax: 4, dailyWorkMinutesMin: 240, dailyWorkMinutesMax: 420 }),
+      partTimeConditions({ weeklyMinutesLimit: 20 * 60, weeklyMinutesLimitType: "inclusive", weeklyWorkDaysMax: 5, dailyWorkMinutesMax: 240 }),
+      partTimeConditions({ weeklyMinutesLimit: 40 * 60, weeklyMinutesLimitType: "inclusive", weeklyWorkDaysMax: 5, dailyWorkMinutesMin: 360, dailyWorkMinutesMax: 480 }),
+    ];
+    for (const [index, contract] of patterns.entries()) {
+      const management = service.createStaff(actor, {
+        name: `架空 非常勤${index + 1}`,
+        employmentStartDate: "2026-04-01",
+      });
+      const staffId = management.staff.find((staff) => staff.name === `架空 非常勤${index + 1}`).id;
+      const saved = service.createWorkConditionVersion(actor, staffId, {
+        validFrom: "2026-04-01",
+        employmentType: "非常勤",
+        ...contract,
+        availability: allWeekdays(),
+      }).staff.find((staff) => staff.id === staffId).conditions[0];
+      assert.equal(saved.monthlyMinutesLimit, null);
+      assert.deepEqual({
+        weeklyMinutesLimit: saved.weeklyMinutesLimit,
+        weeklyMinutesLimitType: saved.weeklyMinutesLimitType,
+        preferredWeeklyWorkDaysMin: saved.preferredWeeklyWorkDaysMin,
+        weeklyWorkDaysMax: saved.weeklyWorkDaysMax,
+        dailyWorkMinutesMin: saved.dailyWorkMinutesMin,
+        dailyWorkMinutesMax: saved.dailyWorkMinutesMax,
+      }, contract);
+    }
   });
 });
 

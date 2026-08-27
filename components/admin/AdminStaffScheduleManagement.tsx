@@ -124,6 +124,12 @@ type DraftReviewIssue = AutomaticPreviewIssue & {
   consecutiveDays?: number;
   startDate?: string;
   shortage?: number;
+  actualDays?: number;
+  limitDays?: number;
+  minimumDays?: number;
+  weekStart?: string;
+  weekEnd?: string;
+  missingContextMonths?: string[];
 };
 type DraftReviewIssueKind = "childcareStaffing" | "licensedStaffing" | "workConditions" | "breaks";
 type DraftConfirmationIssue = DraftReviewIssue & {
@@ -310,6 +316,11 @@ function DraftReviewIssueDetails({ issue, kind }: {
         {issue.requiredDaysOff !== undefined ? <div><dt>必要公休</dt><dd>{issue.requiredDaysOff}日</dd></div> : null}
         {issue.dayOffDays !== undefined ? <div><dt>現在の公休</dt><dd>{issue.dayOffDays}日</dd></div> : null}
         {issue.shortageDays !== undefined ? <div><dt>不足公休</dt><dd>{issue.shortageDays}日</dd></div> : null}
+        {issue.actualDays !== undefined ? <div><dt>週の勤務日数</dt><dd>{issue.actualDays}日</dd></div> : null}
+        {issue.limitDays !== undefined ? <div><dt>週最大勤務日数</dt><dd>{issue.limitDays}日</dd></div> : null}
+        {issue.minimumDays !== undefined ? <div><dt>週希望最低日数</dt><dd>{issue.minimumDays}日</dd></div> : null}
+        {issue.weekStart && issue.weekEnd ? <div><dt>対象週</dt><dd>{formatDate(issue.weekStart)}～{formatDate(issue.weekEnd)}</dd></div> : null}
+        {issue.missingContextMonths?.length ? <div><dt>未確認の月</dt><dd>{issue.missingContextMonths.join("、")}</dd></div> : null}
       </dl> : null}
       {kind === "breaks" ? <dl className="automatic-preview-issue-metrics">
         <div><dt>勤務時間</dt><dd>{issue.workStartTime && issue.workEndTime ? `${issue.workStartTime}～${issue.workEndTime}` : "確認できません"}</dd></div>

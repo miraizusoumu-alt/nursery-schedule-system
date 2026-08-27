@@ -139,6 +139,12 @@ test("keeps the existing screens while domain and storage logic stay separated",
   assert.match(staffManagement, /勤務条件を保存/);
   assert.match(staffManagement, /基本情報は未保存です。/);
   assert.match(staffManagement, /勤務条件の保存が完了しました。/);
+  assert.match(staffManagement, /非常勤の契約勤務条件/);
+  assert.match(staffManagement, /週勤務時間上限/);
+  assert.match(staffManagement, /以内（ちょうどまで可）/);
+  assert.match(staffManagement, /未満（ちょうどは不可）/);
+  assert.match(staffManagement, /週希望最低勤務日数/);
+  assert.match(staffManagement, /1日最低勤務時間/);
   assert.doesNotMatch(staffManagement, /月間勤務上限（時間）|連続勤務日数上限/);
   assert.doesNotMatch(staffManagement, /職員コード<\/span><input/);
   assert.ok(

@@ -52,9 +52,11 @@ function staff(id, options = {}) {
       ? [{ type: qualification, validFrom: "2026-01-01", validTo: null }]
       : [],
     workConditions: [{
+      id: `condition-${id}`,
       validFrom: "2026-01-01",
       validTo: null,
       employmentType: options.employmentType ?? "常勤",
+      ...(options.workCondition ?? {}),
       availability: Array.from({ length: 7 }, (_, weekday) => ({
         weekday,
         available: true,
@@ -591,4 +593,63 @@ test("leaves an insufficient existing break unresolved without generating a spli
   assert.equal(outcome.unresolvedReasonCode, "CONTIGUOUS_BREAK_UNAVAILABLE");
   assert.equal(result.breakSegments.filter((segment) => segment.staffId === "A").length, 1);
   assert.equal(result.breakSegments.find((segment) => segment.staffId === "A").source, "existing");
+});
+
+test("does not use part-time relief workers beyond weekly limits or below their daily minimum", () => {
+  const date = "2026-09-10";
+  const contract = {
+    weeklyMinutesLimit: 12 * 60,
+    weeklyMinutesLimitType: "inclusive",
+    preferredWeeklyWorkDaysMin: 1,
+    weeklyWorkDaysMax: 3,
+    dailyWorkMinutesMin: 3 * 60,
+    dailyWorkMinutesMax: 5 * 60,
+  };
+  const profiles = [
+    staff("A"),
+    staff("B"),
+    staff("C", { employmentType: "非常勤", workCondition: contract }),
+  ];
+  const slots = requirements("11:00", "14:00", { date });
+  const weeklyLimitedPlacement = manualPlacement(slots, profiles, ["A", "B"]);
+  weeklyLimitedPlacement.automaticWorkLimitProfiles = [{
+    staffId: "C",
+    targetMonth: "2026-09",
+    dailyLimitMinutes: 480,
+    monthlyLimitMinutes: null,
+    workConditions: profiles[2].workConditions,
+    schedulePreferences: [],
+    existingDays: [
+      { date: "2026-09-07", scheduledWorkMinutes: 240, breakMinutes: 0 },
+      { date: "2026-09-08", scheduledWorkMinutes: 240, breakMinutes: 0 },
+      { date: "2026-09-09", scheduledWorkMinutes: 240, breakMinutes: 0 },
+    ],
+  }];
+  const weeklyLimited = planAutomaticBreaks({
+    requirementSlots: slots,
+    placement: weeklyLimitedPlacement,
+    staffProfiles: profiles,
+    breakRequirements: [{ staffId: "A", date, requiredBreakMinutes: 60 }],
+  });
+  assert.equal(weeklyLimited.breakOutcomes[0].placementSucceeded, false);
+  assert.equal(weeklyLimited.breakOutcomes[0].unresolvedReasonCode, "BREAK_COVERAGE_UNAVAILABLE");
+
+  const minimumPlacement = manualPlacement(slots, profiles, ["A", "B"]);
+  minimumPlacement.automaticWorkLimitProfiles = [{
+    staffId: "C",
+    targetMonth: "2026-09",
+    dailyLimitMinutes: 480,
+    monthlyLimitMinutes: null,
+    workConditions: profiles[2].workConditions,
+    schedulePreferences: [],
+    existingDays: [],
+  }];
+  const belowMinimum = planAutomaticBreaks({
+    requirementSlots: slots,
+    placement: minimumPlacement,
+    staffProfiles: profiles,
+    breakRequirements: [{ staffId: "A", date, requiredBreakMinutes: 60 }],
+  });
+  assert.equal(belowMinimum.breakOutcomes[0].placementSucceeded, false);
+  assert.equal(belowMinimum.breakOutcomes[0].unresolvedReasonCode, "BREAK_COVERAGE_UNAVAILABLE");
 });

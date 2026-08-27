@@ -71,6 +71,13 @@
       "when": 1787654522635,
       "tag": "0009_exotic_skin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787813931865,
+      "tag": "0010_careless_leper_queen",
+      "breakpoints": true
     }
   ]
 }

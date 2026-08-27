@@ -2928,6 +2928,22 @@ h2 {
   border-top: 1px solid var(--line);
 }
 
+.admin-part-time-conditions {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-block: 1px solid var(--line);
+}
+
+.admin-part-time-conditions h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.admin-part-time-conditions .admin-child-form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .admin-staff-empty {
   display: grid;
   justify-items: center;
@@ -3591,6 +3607,10 @@ h2 {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
+  }
+
+  .admin-part-time-conditions .admin-child-form-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .admin-staff-history li {

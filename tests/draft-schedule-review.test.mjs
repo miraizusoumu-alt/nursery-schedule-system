@@ -24,6 +24,7 @@ function profile(id, staffCode, qualification = "licensed_nursery_teacher", opti
       validFrom: "2026-01-01",
       validTo: null,
       employmentType: options.employmentType ?? "常勤",
+      ...(options.workCondition ?? {}),
       availability: Array.from({ length: 7 }, (_, weekday) => ({
         weekday,
         available: true,
@@ -33,6 +34,7 @@ function profile(id, staffCode, qualification = "licensed_nursery_teacher", opti
     }],
     schedulePreferences: options.schedulePreferences ?? [],
     scheduledDays: options.scheduledDays ?? [],
+    availableScheduleMonths: options.availableScheduleMonths ?? [],
   };
 }
 
@@ -165,6 +167,74 @@ test("reports a clean current draft when staffing and rules are satisfied", () =
     redIssues: [],
     yellowIssues: [],
   });
+});
+
+test("rechecks part-time daily and Monday-to-Sunday weekly contracts including adjacent months", () => {
+  const targetMonth = "2026-08";
+  const workCondition = {
+    weeklyMinutesLimit: 20 * 60,
+    weeklyMinutesLimitType: "exclusive",
+    preferredWeeklyWorkDaysMin: 3,
+    weeklyWorkDaysMax: 4,
+    dailyWorkMinutesMin: 3 * 60,
+    dailyWorkMinutesMax: 5 * 60,
+  };
+  const adjacentDays = [
+    day("part-time", "2026-07-27", [
+      { startTime: "09:00", endTime: "12:00", activityType: "training" },
+      { startTime: "12:00", endTime: "13:00", activityType: "break" },
+      { startTime: "13:00", endTime: "15:00", activityType: "administration" },
+    ]),
+    day("part-time", "2026-07-28", [childcare("09:00", "14:00")]),
+    day("part-time", "2026-07-29", [childcare("09:00", "14:00")]),
+  ];
+  const currentDays = [
+    day("part-time", "2026-08-01", [childcare("09:00", "14:00")]),
+    day("part-time", "2026-08-02", [childcare("09:00", "09:15")]),
+    day("part-time", "2026-08-03", [childcare("09:00", "14:15")]),
+    day("part-time", "2026-08-04", [childcare("09:00", "11:00")]),
+    day("part-time", "2026-08-05", [childcare("08:00", "10:00")]),
+  ];
+  const staff = profile("part-time", "STPT01", "licensed_nursery_teacher", {
+    employmentType: "非常勤",
+    workCondition,
+    scheduledDays: adjacentDays,
+    availableScheduleMonths: ["2026-07"],
+    schedulePreferences: [{
+      date: "2026-08-05",
+      preferenceType: "work_time",
+      startTime: "08:00",
+      endTime: "10:00",
+    }],
+  });
+  const review = evaluateCurrentDraftSchedule({
+    targetMonth,
+    requirementSource: { period: { id: "period-pt", targetMonth, status: "open" }, slots: [] },
+    staffProfiles: [staff],
+    currentDays,
+  });
+  const byCode = new Map(review.issues.workConditions.map((issue) => [issue.code, issue]));
+  assert.equal(byCode.get("PART_TIME_WEEKLY_WORK_LIMIT_EXCEEDED").weekStart, "2026-07-27");
+  assert.equal(byCode.get("PART_TIME_WEEKLY_WORK_LIMIT_EXCEEDED").actualMinutes, 20 * 60 + 15);
+  assert.equal(byCode.get("PART_TIME_WEEKLY_WORK_LIMIT_EXCEEDED").limitMinutes, 19 * 60 + 45);
+  assert.equal(byCode.get("PART_TIME_WEEKLY_WORK_DAYS_EXCEEDED").actualDays, 5);
+  assert.equal(byCode.get("PART_TIME_DAILY_WORK_MINUTES_EXCEEDED").actualMinutes, 5 * 60 + 15);
+  assert.ok(review.issues.workConditions.some((issue) => {
+    return issue.code === "PART_TIME_DAILY_MINIMUM_MINUTES_UNMET" && issue.date === "2026-08-04";
+  }));
+  assert.ok(!review.issues.workConditions.some((issue) => {
+    return issue.code === "PART_TIME_DAILY_MINIMUM_MINUTES_UNMET" && issue.date === "2026-08-05";
+  }));
+  assert.ok(review.issues.workConditions.some((issue) => {
+    return issue.code === "PART_TIME_WEEKLY_MINIMUM_DAYS_UNMET";
+  }));
+  assert.ok(review.issues.workConditions.some((issue) => {
+    return issue.code === "WEEKLY_WORK_CONTEXT_INCOMPLETE" && issue.missingContextMonths.includes("2026-09");
+  }));
+  assert.equal(review.confirmation.status, "blocked");
+  assert.ok(review.confirmation.redIssues.some((issue) => issue.code === "PART_TIME_WEEKLY_WORK_LIMIT_EXCEEDED"));
+  assert.ok(review.confirmation.yellowIssues.some((issue) => issue.code === "PART_TIME_DAILY_MINIMUM_MINUTES_UNMET"));
+  assert.ok(review.confirmation.yellowIssues.some((issue) => issue.code === "WEEKLY_WORK_CONTEXT_INCOMPLETE"));
 });
 
 test("classifies staffing, qualification, break, and consecutive-work issues as confirmation blockers", () => {
