@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AdminIcon } from "@/components/ui/AdminIcon";
 import { ApiError, api } from "@/lib/client/api";
 
@@ -24,6 +24,7 @@ type StaffSummary = {
   staffCode: string;
   name: string;
   employmentType: string | null;
+  days: ScheduleDay[];
   selectedPreference: StaffPreference;
   selectedDay: ScheduleDay | null;
   selectedDayScheduledWorkMinutes: number;
@@ -42,6 +43,7 @@ type StaffSummary = {
   };
   consecutiveWorkWarnings: Array<{ startDate: string; endDate: string; consecutiveDays: number; message: string }>;
 };
+type ScheduleHalf = "first" | "second";
 type StaffSchedule = {
   targetMonth: string;
   fiscalYear: number;
@@ -184,6 +186,7 @@ const activityLabels: Record<ActivityType, string> = {
   meal_service: "配膳",
   other_work: "その他業務",
 };
+const tableWeekdayLabels = ["日", "月", "火", "水", "木", "金", "土"];
 const timeOptions = Array.from({ length: (14 * 60) / 15 + 1 }, (_, index) => {
   const minutes = 6 * 60 + 30 + index * 15;
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -220,6 +223,31 @@ function formatMonth(value: string) {
 function formatDate(value: string) {
   const [, month, day] = value.split("-");
   return `${Number(month)}/${Number(day)}`;
+}
+
+function formatTableDate(value: string) {
+  const date = new Date(`${value}T00:00:00Z`);
+  return `${Number(value.slice(-2))}日（${tableWeekdayLabels[date.getUTCDay()]}）`;
+}
+
+function scheduleCellLines(day: ScheduleDay | null) {
+  if (!day) return [{ key: "empty", label: "－", kind: "empty" }];
+  if (day.dayType === "day_off" || day.dayType === "paid_leave") {
+    return [{ key: day.dayType, label: dayTypeLabels[day.dayType], kind: "state" }];
+  }
+  const lines = day.segments.map((segment, index) => ({
+    key: `${segment.startTime}-${segment.endTime}-${segment.activityType}-${index}`,
+    label: `${segment.activityType === "childcare" ? "" : segment.activityType === "break" ? "休 " : `${activityLabels[segment.activityType]} `}${segment.startTime}～${segment.endTime}`,
+    kind: segment.activityType === "break" ? "break" : "work",
+  }));
+  if (day.dayType === "other") {
+    lines.unshift({ key: "other", label: dayTypeLabels.other, kind: "state" });
+  }
+  return lines.length ? lines : [{ key: day.dayType, label: dayTypeLabels[day.dayType], kind: "state" }];
+}
+
+function ScheduleCellContent({ day }: { day: ScheduleDay | null }) {
+  return <>{scheduleCellLines(day).map((line) => <span key={line.key} className={`staff-schedule-cell-line ${line.kind}`}>{line.label}</span>)}</>;
 }
 
 function formatMinutes(value: number) {
@@ -405,6 +433,9 @@ export function AdminStaffScheduleManagement() {
   const [draftReview, setDraftReview] = useState<DraftReview | null>(null);
   const [dayEditorDirty, setDayEditorDirty] = useState(false);
   const [preferenceEditorDirty, setPreferenceEditorDirty] = useState(false);
+  const [scheduleHalf, setScheduleHalf] = useState<ScheduleHalf>("first");
+  const [compactDate, setCompactDate] = useState(`${initialMonth}-01`);
+  const dayEditorRef = useRef<HTMLElement>(null);
 
   const load = useCallback(async (month: string, date = `${month}-01`, versionId = "") => {
     const query = new URLSearchParams({ targetMonth: month, selectedDate: date });
@@ -417,6 +448,8 @@ export function AdminStaffScheduleManagement() {
     setPreferenceEditorDirty(false);
     setTargetMonth(month);
     setSelectedDate(result.schedule.selectedDate);
+    setScheduleHalf(Number(result.schedule.selectedDate.slice(-2)) <= 15 ? "first" : "second");
+    setCompactDate(result.schedule.selectedDate);
     setSelectedStaffId((current) => result.schedule.staff.some((staff) => staff.id === current)
       ? current
       : result.schedule.staff[0]?.id ?? "");
@@ -482,6 +515,7 @@ export function AdminStaffScheduleManagement() {
       : new Date(Date.UTC(Number(targetMonth.slice(0, 4)), Number(targetMonth.slice(5, 7)), 0)).getUTCDate();
     return Array.from({ length: dayCount }, (_, index) => `${targetMonth}-${String(index + 1).padStart(2, "0")}`);
   }, [schedule, targetMonth]);
+  const halfDates = useMemo(() => scheduleHalf === "first" ? dates.slice(0, 15) : dates.slice(15), [dates, scheduleHalf]);
   const readOnly = !schedule?.viewedVersion || schedule.viewedVersion.readOnly;
   const previewDates = useMemo(() => {
     const grouped = new Map<string, AutomaticPreviewDay[]>();
@@ -563,6 +597,25 @@ export function AdminStaffScheduleManagement() {
   function markPreferenceEditorDirty() {
     setPreferenceEditorDirty(true);
     setDraftReview(null);
+  }
+
+  function selectScheduleCell(staffId: string, date: string) {
+    if (!schedule?.viewedVersion) return;
+    if (hasUnsavedEditorChanges) {
+      setMessage("");
+      setError("未保存の変更があります。保存またはキャンセルしてから別の日を選択してください。");
+      return;
+    }
+    const versionId = schedule.viewedVersion.isCurrent ? "" : schedule.viewedVersion.id;
+    void run("cell", async () => {
+      await load(targetMonth, date, versionId);
+      setSelectedStaffId(staffId);
+      setCompactDate(date);
+      window.setTimeout(() => {
+        dayEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        dayEditorRef.current?.querySelector<HTMLElement>("select, button")?.focus({ preventScroll: true });
+      }, 0);
+    });
   }
 
   return (
@@ -704,13 +757,51 @@ export function AdminStaffScheduleManagement() {
         <p className="admin-schedule-note">確認日時: {new Date(draftReview.checkedAt).toLocaleString("ja-JP")}</p>
       </section> : null}
 
+      {schedule?.month ? <section className="auth-section staff-schedule-half-view">
+        <div className="auth-section-heading">
+          <div><span>{formatMonth(targetMonth)} / {schedule.viewedVersion?.status === "confirmed" ? "確定済み" : "作成中"}</span><h3>職員別シフト表</h3></div>
+          <div className="staff-schedule-half-switch" role="group" aria-label="表示する期間">
+            <button type="button" className={scheduleHalf === "first" ? "active" : ""} aria-pressed={scheduleHalf === "first"} onClick={() => {
+              setScheduleHalf("first");
+              setCompactDate(dates[0] ?? `${targetMonth}-01`);
+            }}>1日～15日</button>
+            <button type="button" className={scheduleHalf === "second" ? "active" : ""} aria-pressed={scheduleHalf === "second"} onClick={() => {
+              setScheduleHalf("second");
+              setCompactDate(dates[15] ?? dates.at(-1) ?? `${targetMonth}-01`);
+            }}>16日～月末</button>
+          </div>
+        </div>
+        <p className="admin-schedule-note">職員と日付のセルを選ぶと、既存の日別シフト編集欄へ移動します。</p>
+        <div className="staff-schedule-half-table-wrap">
+          <table className="staff-schedule-half-table">
+            <thead><tr><th className="staff-schedule-name-column" scope="col">職員</th>{halfDates.map((date) => <th key={date} scope="col">{formatTableDate(date)}</th>)}</tr></thead>
+            <tbody>{schedule.staff.map((staff) => <tr key={staff.id}>
+              <th className="staff-schedule-name-column" scope="row"><strong>{staff.name}</strong><span>{staff.staffCode}</span></th>
+              {halfDates.map((date) => {
+                const day = staff.days.find((entry) => entry.date === date) ?? null;
+                const selected = selectedStaffId === staff.id && selectedDate === date;
+                const summary = scheduleCellLines(day).map((line) => line.label).join("、");
+                return <td key={date}><button type="button" className={selected ? "selected" : ""} disabled={busy !== ""} aria-label={`${staff.name} ${formatTableDate(date)} ${summary}`} onClick={() => selectScheduleCell(staff.id, date)}><ScheduleCellContent day={day} /></button></td>;
+              })}
+            </tr>)}</tbody>
+          </table>
+        </div>
+        <div className="staff-schedule-mobile-view">
+          <label><span>表示する日</span><select value={halfDates.includes(compactDate) ? compactDate : halfDates[0] ?? ""} onChange={(event) => setCompactDate(event.currentTarget.value)}>{halfDates.map((date) => <option key={date} value={date}>{formatTableDate(date)}</option>)}</select></label>
+          <div className="staff-schedule-mobile-list">{schedule.staff.map((staff) => {
+            const day = staff.days.find((entry) => entry.date === compactDate) ?? null;
+            return <button key={staff.id} type="button" disabled={busy !== ""} className={selectedStaffId === staff.id && selectedDate === compactDate ? "selected" : ""} onClick={() => selectScheduleCell(staff.id, compactDate)}><span><strong>{staff.name}</strong><small>{staff.staffCode}</small></span><span className="staff-schedule-mobile-summary"><ScheduleCellContent day={day} /></span></button>;
+          })}</div>
+        </div>
+      </section> : null}
+
       {schedule ? <section className="auth-section">
         <div className="auth-section-heading"><div><span>{formatMonth(targetMonth)}</span><h3>職員と日付を選択</h3></div></div>
         <div className="staff-schedule-selection">
-          <label><span>職員</span><select value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.currentTarget.value)}>{schedule.staff.map((staff) => <option key={staff.id} value={staff.id}>{staff.name}（{staff.staffCode}）</option>)}</select></label>
+          <label><span>職員</span><select value={selectedStaffId} onChange={(event) => selectScheduleCell(event.currentTarget.value, selectedDate)}>{schedule.staff.map((staff) => <option key={staff.id} value={staff.id}>{staff.name}（{staff.staffCode}）</option>)}</select></label>
           <label><span>日付</span><select value={selectedDate} onChange={(event) => {
             const date = event.currentTarget.value;
-            void run("date", async () => { await load(targetMonth, date, schedule.viewedVersion?.isCurrent ? "" : schedule.viewedVersion?.id ?? ""); });
+            selectScheduleCell(selectedStaffId, date);
           }}>{dates.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}</select></label>
         </div>
         {!schedule.staff.length ? <p className="admin-schedule-note">この月に在籍する職員がいません。</p> : null}
@@ -764,7 +855,7 @@ export function AdminStaffScheduleManagement() {
           {selectedStaff.basicMonthlyScheduledWorkMinutes !== null ? <p className="staff-schedule-baseline">予定 {formatMinutes(selectedStaff.monthlyScheduledWorkMinutes)} / 基本 {formatMinutes(selectedStaff.basicMonthlyScheduledWorkMinutes)} / 差 {formatMinutes(selectedStaff.monthlyScheduledWorkDifferenceMinutes ?? 0)}</p> : null}
           {selectedStaff.daysOff.warning ? <p className="auth-message warning">{selectedStaff.daysOff.warning}</p> : null}
 
-          <section className="auth-section staff-schedule-editor">
+          <section ref={dayEditorRef} className="auth-section staff-schedule-editor">
             <div className="auth-section-heading"><div><span>{selectedStaff.name} / {formatDate(selectedDate)}</span><h3>日別シフト</h3></div>{readOnly ? <span className="admin-state confirmed">閲覧のみ</span> : <span className={`admin-state ${dayEditorDirty ? "warning" : "confirmed"}`}>{busy === "save" ? "保存中" : dayEditorDirty ? "未保存" : "保存済み"}</span>}</div>
             <label><span>日別状態</span><select value={dayType} disabled={readOnly || busy !== ""} onChange={(event) => {
               const value = event.currentTarget.value as DayType;

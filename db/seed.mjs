@@ -51,8 +51,8 @@ export function seedDevelopmentData(database, now = new Date()) {
     upsert(
       database,
       `INSERT INTO administrators (id, login_id, display_name, role, password_hash, must_change_password, status, created_at, updated_at)
-       VALUES ('demo-admin-001', 'demo-admin-001', '架空 管理者', 'master', NULL, 1, 'active', ?, ?)
-       ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, password_hash = NULL, updated_at = excluded.updated_at`,
+       VALUES ('demo-admin-001', 'demo-admin-001', '架空 管理者', 'master', NULL, 0, 'active', ?, ?)
+       ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, password_hash = NULL, must_change_password = 0, updated_at = excluded.updated_at`,
       [timestamp, timestamp],
     );
 

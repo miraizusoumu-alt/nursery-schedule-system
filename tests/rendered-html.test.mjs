@@ -315,6 +315,13 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(staffSchedule, /このシフトはまだ確定できません|確認事項があります|確定可能です/);
   assert.match(staffSchedule, /確認事項を確認してシフトを確定/);
   assert.match(staffSchedule, /未保存の変更があります。保存してから確定してください/);
+  assert.match(staffSchedule, /職員別シフト表|1日～15日|16日～月末/);
+  assert.match(staffSchedule, /scheduleCellLines|staff\.days\.find/);
+  assert.match(staffSchedule, /休 .*startTime.*endTime/s);
+  assert.match(staffSchedule, /未保存の変更があります。保存またはキャンセルしてから別の日を選択してください/);
+  assert.match(staffSchedule, /selectScheduleCell\(staff\.id, date\)/);
+  assert.match(staffSchedule, /scrollIntoView|dayEditorRef/);
+  assert.match(staffSchedule, /schedule\.viewedVersion\.isCurrent \? "" : schedule\.viewedVersion\.id/);
   assert.match(staffScheduleHttp, /error\.details/);
   assert.match(staffSchedule, /acknowledgeWarnings/);
   assert.match(childManagement, /＋ 園児を新規登録|園児を選択してください|基本利用予定|基本利用パターン履歴/);
@@ -355,6 +362,9 @@ test("connects protected administrator schedule operations without changing the 
   assert.match(css, /admin-nav-logout/);
   assert.match(css, /automatic-shift-preview/);
   assert.match(css, /automatic-preview-days/);
+  assert.match(css, /staff-schedule-half-table/);
+  assert.match(css, /staff-schedule-mobile-view/);
+  assert.match(css, /position:\s*sticky/);
 });
 
 test("supports password managers, visibility controls, and the eight-character policy", async () => {

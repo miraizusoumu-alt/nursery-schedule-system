@@ -348,6 +348,50 @@ test("sends a family directly to schedules and rejects self-service password cha
   });
 });
 
+test("sends newly issued and reissued administrators directly to administration without forced password changes", async () => {
+  await withAuthDatabase(async ({ database, service, fixture }) => {
+    const origin = "http://localhost:3000";
+    const master = await service.login({ scope: "administrator", loginId: "demo-master", password: fixture.passwords.master, source: "administrator-issuer" });
+    const issued = await service.issueAdministrator(master.actor, {
+      loginId: "demo-direct-admin",
+      displayName: "架空 直接ログイン管理者",
+      role: "normal",
+    });
+    const issuedRow = database.prepare("SELECT password_hash, must_change_password FROM administrators WHERE id = ?").get(issued.administratorId);
+    assert.match(issuedRow.password_hash, /^scrypt\$/);
+    assert.notEqual(issuedRow.password_hash, issued.temporaryPassword);
+    assert.equal(issuedRow.must_change_password, 0);
+
+    async function loginThroughHttp(password, source) {
+      const response = await handleAuthApiRequest(new Request(`${origin}/api/auth/login/admin`, {
+        method: "POST",
+        headers: { origin, "content-type": "application/json", "x-forwarded-for": source },
+        body: JSON.stringify({ loginId: issued.loginId, password }),
+      }), { service });
+      assert.equal(response.status, 200);
+      const body = await response.clone().json();
+      assert.equal(body.redirectTo, "/admin/accounts");
+      assert.equal(body.actor.mustChangePassword, false);
+      const sessionToken = decodeURIComponent(response.headers.getSetCookie()
+        .find((value) => value.startsWith("nursery_session="))?.split(";", 1)[0].split("=", 2)[1] ?? "");
+      assert.equal(service.sessionByToken(sessionToken).actor.mustChangePassword, false);
+      assert.equal(authorizeProtectedPage(new Request(`${origin}/admin/accounts`, {
+        headers: { cookie: `nursery_session=${sessionToken}` },
+      }), service), null);
+      return sessionToken;
+    }
+
+    const issuedSessionToken = await loginThroughHttp(issued.temporaryPassword, "issued-administrator-http");
+    const reissued = await service.reissueAdministratorPassword(master.actor, issued.administratorId, fixture.passwords.master);
+    assert.equal(service.sessionByToken(issuedSessionToken), null);
+    const reissuedRow = database.prepare("SELECT password_hash, must_change_password FROM administrators WHERE id = ?").get(issued.administratorId);
+    assert.match(reissuedRow.password_hash, /^scrypt\$/);
+    assert.notEqual(reissuedRow.password_hash, reissued.temporaryPassword);
+    assert.equal(reissuedRow.must_change_password, 0);
+    await loginThroughHttp(reissued.temporaryPassword, "reissued-administrator-http");
+  });
+});
+
 test("rejects direct API privilege escalation and missing administrator reauthentication", async () => {
   await withAuthDatabase(async ({ service, fixture }) => {
     const family = await service.login({ scope: "family", loginId: "demo-family-b", password: fixture.passwords.familyB, source: "family-api-scope" });

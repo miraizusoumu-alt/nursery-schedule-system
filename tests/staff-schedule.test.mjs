@@ -394,6 +394,9 @@ test("creates, confirms, revises, and reconfirms monthly schedules without chang
         segments: fullWorkDay(),
       });
     }
+    const fullTimeDays = september.staff.find((staff) => staff.id === "staff-full").days;
+    assert.equal(fullTimeDays.length, 5);
+    assert.deepEqual(fullTimeDays[0].segments.map((segment) => segment.activityType), ["childcare", "break", "childcare", "administration"]);
     september = service.saveScheduleDay(actor, {
       targetMonth: "2026-09",
       versionId: firstVersionId,
@@ -403,6 +406,7 @@ test("creates, confirms, revises, and reconfirms monthly schedules without chang
       segments: [],
     });
     assert.equal(september.staff.find((staff) => staff.id === "staff-full").monthlyScheduledWorkMinutes, 40 * 60);
+    assert.equal(september.staff.find((staff) => staff.id === "staff-full").days.length, 6);
     september = service.confirmMonthlySchedule(actor, {
       targetMonth: "2026-09",
       versionId: firstVersionId,
@@ -436,6 +440,13 @@ test("creates, confirms, revises, and reconfirms monthly schedules without chang
     const newVersion = service.scheduleDashboard(actor, { targetMonth: "2026-09", selectedDate: "2026-09-01" });
     assert.equal(oldVersion.staff.find((staff) => staff.id === "staff-full").selectedDay.dayType, "work");
     assert.equal(newVersion.staff.find((staff) => staff.id === "staff-full").selectedDay.dayType, "paid_leave");
+    assert.equal(oldVersion.staff.find((staff) => staff.id === "staff-full").days.find((day) => day.date === "2026-09-01").dayType, "work");
+    assert.equal(newVersion.staff.find((staff) => staff.id === "staff-full").days.find((day) => day.date === "2026-09-01").dayType, "paid_leave");
+
+    assert.equal(service.scheduleDashboard(actor, { targetMonth: "2026-02" }).dayCount, 28);
+    assert.equal(service.scheduleDashboard(actor, { targetMonth: "2028-02" }).dayCount, 29);
+    assert.equal(service.scheduleDashboard(actor, { targetMonth: "2026-04" }).dayCount, 30);
+    assert.equal(service.scheduleDashboard(actor, { targetMonth: "2026-05" }).dayCount, 31);
 
     const october = service.createMonthlySchedule(actor, { targetMonth: "2026-10" });
     service.saveScheduleDay(actor, {

@@ -58,7 +58,7 @@ async function createAdministrator(database, role, displayName, timestamp) {
   const passwordHash = await hashPassword(temporaryPassword);
   if (existing) {
     database.prepare(
-      `UPDATE administrators SET password_hash = ?, must_change_password = 1,
+      `UPDATE administrators SET password_hash = ?, must_change_password = 0,
        temporary_password_issued_at = ?, credential_version = credential_version + 1,
        status = 'active', stopped_at = NULL, updated_at = ? WHERE id = ?`,
     ).run(passwordHash, timestamp, timestamp, existing.id);
@@ -71,7 +71,7 @@ async function createAdministrator(database, role, displayName, timestamp) {
     `INSERT INTO administrators
      (id, login_id, display_name, role, password_hash, must_change_password,
       temporary_password_issued_at, credential_version, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?, 1, 'active', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 0, ?, 1, 'active', ?, ?)`,
   ).run(administratorId, loginId, displayName, role, passwordHash, timestamp, timestamp, timestamp);
   operation(database, "development_account.created", "administrator", administratorId, { loginId, role }, timestamp);
   return { type: role, created: true, loginId, temporaryPassword };
@@ -109,7 +109,7 @@ export async function resetDevelopmentAuthAccounts(database, currentTime = new D
       database.prepare("UPDATE auth_sessions SET invalidated_at = ?, invalidation_reason = 'development_reset' WHERE family_account_id = ? AND invalidated_at IS NULL").run(timestamp, target.row.id);
     } else {
       database.prepare(
-        `UPDATE administrators SET password_hash = ?, must_change_password = 1,
+        `UPDATE administrators SET password_hash = ?, must_change_password = 0,
          temporary_password_issued_at = ?, credential_version = credential_version + 1,
          status = 'active', stopped_at = NULL, updated_at = ? WHERE id = ?`,
       ).run(passwordHash, timestamp, timestamp, target.row.id);
