@@ -79,6 +79,26 @@ function partTimeContract(overrides = {}) {
   };
 }
 
+function setAvailability(profile, startTime, endTime) {
+  profile.workConditions[0].availability = profile.workConditions[0].availability.map((entry) => ({
+    ...entry,
+    available: true,
+    startTime,
+    endTime,
+  }));
+  return profile;
+}
+
+function setWeekdayAvailability(profile, weekday, startTime, endTime) {
+  profile.workConditions[0].availability = profile.workConditions[0].availability.map((entry) => ({
+    ...entry,
+    available: entry.weekday === weekday,
+    startTime: entry.weekday === weekday ? startTime : null,
+    endTime: entry.weekday === weekday ? endTime : null,
+  }));
+  return profile;
+}
+
 test("integrates planned days off while preserving paid leave and non-work other days", () => {
   const profiles = [
     staff("A", {
@@ -594,4 +614,125 @@ test("does not keep short part-time assignments unless a shorter daily preferenc
   });
   assert.equal(preferred.placement.slots.reduce((total, slot) => total + slot.assignedChildcareWorkerCount, 0), 8);
   assert.ok(!preferred.daysOffPlan.staffPlans[0].finalPlannedDaysOff.includes(date));
+});
+
+test("rechecks relief work and plans a newly required break with finite deterministic rounds", () => {
+  const date = "2026-09-07";
+  const primary = staff("B", { staffCode: "ST0001" });
+  const firstRelief = staff("A", { staffCode: "ST0002" });
+  const secondRelief = setAvailability(staff("E", {
+    staffCode: "ST0003",
+    employmentType: "非常勤",
+    workCondition: partTimeContract({ dailyWorkMinutesMin: 15 }),
+  }), "14:00", "14:45");
+  const requirementSlots = [
+    ...quarterHourRequirements(date, "09:00", 22, 2),
+    ...quarterHourRequirements(date, "14:30", 6, 1),
+  ];
+
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots,
+    staffProfiles: [primary, firstRelief, secondRelief],
+  });
+  const repeated = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots: [...requirementSlots].reverse(),
+    staffProfiles: [secondRelief, firstRelief, primary],
+  });
+
+  assert.equal(result.phase2Repair.startRedCount, 1);
+  assert.equal(result.phase2Repair.finalRedCount, 0);
+  assert.equal(result.phase2Repair.completedRounds, 1);
+  assert.equal(result.phase2Repair.cycleDetected, false);
+  assert.ok(result.phase2Repair.acceptedRepairs[0].breakReplanIterations <= 1);
+  assert.equal(result.breakSegments.filter((segment) => segment.staffId === "B").length, 1);
+  assert.equal(result.breakSegments.filter((segment) => segment.staffId === "A").length, 1);
+  assert.deepEqual(result.shortages, []);
+  assert.deepEqual(result.scheduleSegments, repeated.scheduleSegments);
+  assert.equal(repeated.phase2Repair.finalFingerprint, result.phase2Repair.finalFingerprint);
+});
+
+test("rebuilds affected generated breaks before validating a capacity transfer", () => {
+  const transferDate = "2026-09-07";
+  const unaffectedDate = "2026-09-08";
+  const source = setWeekdayAvailability(staff("D", { staffCode: "ST0002" }), 1, "08:30", "17:45");
+  const targetOnly = setWeekdayAvailability(staff("C", { staffCode: "ST0001" }), 1, "17:30", "17:45");
+  const oldRelief = setWeekdayAvailability(staff("R", { staffCode: "ST0003" }), 1, "12:00", "13:00");
+  const incoming = setWeekdayAvailability(staff("G", {
+    staffCode: "ST0004",
+    employmentType: "非常勤",
+    workCondition: partTimeContract({
+      dailyWorkMinutesMin: 240,
+      dailyWorkMinutesMax: 300,
+    }),
+  }), 1, "08:30", "12:30");
+  const unaffected = setWeekdayAvailability(staff("A", { staffCode: "ST0005" }), 2, "08:30", "16:30");
+  const unaffectedRelief = setWeekdayAvailability(staff("B", { staffCode: "ST0006" }), 2, "12:00", "13:00");
+  const requirementSlots = [
+    ...quarterHourRequirements(transferDate, "08:30", 36),
+    requirement(transferDate, "17:30", 2, 1),
+    ...quarterHourRequirements(unaffectedDate, "08:30", 32),
+  ];
+
+  const phaseOneEquivalent = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots,
+    staffProfiles: [source, targetOnly, oldRelief, unaffected, unaffectedRelief],
+  });
+  const oldSourceBreak = phaseOneEquivalent.breakSegments.find((segment) => (
+    segment.staffId === "D" && segment.date === transferDate
+  ));
+  const unaffectedBreak = phaseOneEquivalent.breakSegments.find((segment) => (
+    segment.staffId === "A" && segment.date === unaffectedDate
+  ));
+  assert.ok(oldSourceBreak);
+  assert.ok(unaffectedBreak);
+
+  const result = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots,
+    staffProfiles: [source, targetOnly, oldRelief, incoming, unaffected, unaffectedRelief],
+  });
+  const repeated = calculateIntegratedMonthlyAutomaticShift({
+    targetMonth: "2026-09",
+    requirementSlots: [...requirementSlots].reverse(),
+    staffProfiles: [unaffectedRelief, unaffected, incoming, oldRelief, targetOnly, source],
+  });
+  const accepted = result.phase2Repair.acceptedRepairs.find((entry) => entry.kind === "capacity_transfer");
+  assert.ok(accepted, JSON.stringify({
+    repair: result.phase2Repair,
+    shortages: result.shortages,
+    breaks: result.breakPlan.breakOutcomes,
+  }));
+  assert.equal(accepted.transfer.sourceStaffId, "D");
+  assert.equal(accepted.transfer.incomingStaffId, "G");
+  assert.ok(accepted.affectedStaffDates.includes(`D\u0000${transferDate}`));
+  assert.ok(accepted.affectedStaffDates.includes(`R\u0000${transferDate}`));
+  assert.equal(result.placement.slots.find((slot) => (
+    slot.date === transferDate && slot.startTime === "17:30"
+  )).childcareWorkerShortage, 0);
+  assert.equal(result.breakSegments.some((segment) => (
+    segment.staffId === "D" && segment.date === transferDate
+  )), false);
+  assert.equal(result.placement.slots.some((slot) => (
+    slot.date === transferDate
+      && slot.assignedStaff.some((entry) => entry.staffId === "R"
+        && ["break_relief", "break_reservation"].includes(entry.assignmentSource))
+  )), false);
+  assert.deepEqual(result.breakSegments.find((segment) => (
+    segment.staffId === "A" && segment.date === unaffectedDate
+  )), unaffectedBreak);
+  assert.equal(result.placement.slots.every((slot) => (
+    slot.requiredChildcareWorkers > 0 || slot.assignedStaff.length === 0
+  )), true);
+  assert.equal(result.scheduleSegments.every((segment, index, segments) => (
+    !segments.some((other, otherIndex) => otherIndex !== index
+      && other.staffId === segment.staffId
+      && other.date === segment.date
+      && other.startTime < segment.endTime
+      && segment.startTime < other.endTime)
+  )), true);
+  assert.deepEqual(result.scheduleSegments, repeated.scheduleSegments);
+  assert.equal(result.phase2Repair.finalFingerprint, repeated.phase2Repair.finalFingerprint);
 });

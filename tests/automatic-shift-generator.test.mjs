@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateAutomaticChildcareShift,
+  enumerateAutomaticCapacityTransferCandidates,
   mergeChildcareAssignmentsIntoSegments,
 } from "../lib/server/staffing/automatic-shift-generator.mjs";
 import { staffDateWorkKey } from "../lib/server/staffing/automatic-work-limits.mjs";
@@ -121,12 +122,242 @@ function withFridayAvailabilityCandidates(profile) {
   };
 }
 
+function capacityTransferScenario(options = {}) {
+  const date = "2026-09-07";
+  const source = staff("D", {
+    staffCode: "ST0002",
+    availableStartTime: "09:00",
+    availableEndTime: "14:15",
+    schedulePreferences: options.sourcePreferences ?? [],
+  });
+  const targetOnly = staff("C", {
+    staffCode: "ST0001",
+    availableStartTime: "14:00",
+    availableEndTime: "14:15",
+  });
+  const incoming = partTimeStaff("G", 180, {
+    staffCode: "ST0003",
+    availableStartTime: "09:00",
+    availableEndTime: "12:00",
+    ...(Object.hasOwn(options, "incomingQualification")
+      ? { qualification: options.incomingQualification }
+      : {}),
+  });
+  incoming.schedulePreferences = options.incomingPreferences ?? [];
+  if (options.holidayNotAllowed) {
+    incoming.workConditions[0].holidayWorkAllowed = false;
+    incoming.nationalHolidays = [{ holidayDate: date, name: "架空祝日", source: "test" }];
+  }
+  if (options.incomingScheduledDays) incoming.scheduledDays = options.incomingScheduledDays;
+  if (options.configureIncoming) options.configureIncoming(incoming);
+  const requirements = quarterHourRequirements(date, "09:00", options.earlySlotCount ?? 20);
+  if (options.zeroDemandSlotIndex !== undefined) {
+    requirements[options.zeroDemandSlotIndex].requiredChildcareWorkers = 0;
+  }
+  requirements.push(requirement("14:00", 2, 1, date));
+  const profiles = [source, targetOnly, incoming];
+  const workLimits = workLimitOptions(profiles);
+  workLimits.workLimitProfiles.find((profile) => profile.staffId === source.id).dailyLimitMinutes = 300;
+  if (options.configureWorkLimits) options.configureWorkLimits(workLimits, incoming);
+  return { date, source, targetOnly, incoming, requirements, profiles, workLimits };
+}
+
 test("assigns nobody when a quarter-hour slot requires no staff", () => {
   const result = calculateAutomaticChildcareShift([requirement("09:00", 0)], [staff("A")]);
   assert.equal(result.slots[0].assignedChildcareWorkerCount, 0);
   assert.equal(result.slots[0].assignedLicensedNurseryTeacherCount, 0);
   assert.deepEqual(result.slots[0].assignedStaff, []);
   assert.equal(result.slots[0].childcareWorkerShortage, 0);
+});
+
+test("moves full-time capacity to a later shortage through a contiguous part-time minimum block", () => {
+  const scenario = capacityTransferScenario();
+  const first = calculateAutomaticChildcareShift(
+    scenario.requirements,
+    scenario.profiles,
+    scenario.workLimits,
+  );
+  const repeated = calculateAutomaticChildcareShift(
+    [...scenario.requirements].reverse(),
+    [...scenario.profiles].reverse(),
+    scenario.workLimits,
+  );
+  assert.deepEqual(first, repeated);
+  const candidates = enumerateAutomaticCapacityTransferCandidates({
+    placement: first,
+    staffProfiles: scenario.profiles,
+    workloadFairnessProfiles: scenario.workLimits.workloadFairnessProfiles,
+  });
+  assert.equal(candidates.length, 1);
+  const { slots, ...transfer } = candidates[0];
+  assert.deepEqual(transfer, {
+    date: scenario.date,
+    targetStartTime: "14:00",
+    targetEndTime: "14:15",
+    sourceStaffId: "D",
+    incomingStaffId: "G",
+    blockStartTime: "09:00",
+    blockEndTime: "12:00",
+    transferredMinutes: 180,
+    sourceMinutesBefore: 300,
+    sourceMinutesAfter: 135,
+    incomingMinutesBefore: 0,
+    incomingMinutesAfter: 180,
+  });
+  assert.equal(slots.every((slot) => slot.childcareWorkerShortage === 0), true);
+  assert.equal(slots.every((slot) => slot.licensedNurseryTeacherShortage === 0), true);
+  assert.deepEqual(slots.at(-1).assignedStaff.map((entry) => entry.staffId), ["C", "D"]);
+  assert.equal(slots.slice(0, 12).every((slot) => (
+    slot.assignedStaff.some((entry) => entry.staffId === "G")
+  )), true);
+  assert.equal(slots.slice(12).every((slot) => (
+    slot.assignedStaff.some((entry) => entry.staffId === "D")
+  )), true);
+});
+
+test("rejects capacity transfers that create qualification shortages or isolated work", () => {
+  const unlicensed = capacityTransferScenario({
+    incomingQualification: "childcare_support_worker_local_childcare",
+  });
+  for (const slot of unlicensed.requirements.slice(0, -1)) {
+    slot.requiredLicensedNurseryTeachers = 1;
+  }
+  const unlicensedResult = calculateAutomaticChildcareShift(
+    unlicensed.requirements,
+    unlicensed.profiles,
+    unlicensed.workLimits,
+  );
+  assert.equal(enumerateAutomaticCapacityTransferCandidates({
+    placement: unlicensedResult,
+    staffProfiles: unlicensed.profiles,
+  }).length, 0);
+
+  const isolated = capacityTransferScenario({ earlySlotCount: 12 });
+  isolated.workLimits.workLimitProfiles.find((profile) => profile.staffId === "D").dailyLimitMinutes = 180;
+  const isolatedResult = calculateAutomaticChildcareShift(
+    isolated.requirements,
+    isolated.profiles,
+    isolated.workLimits,
+  );
+  assert.equal(enumerateAutomaticCapacityTransferCandidates({
+    placement: isolatedResult,
+    staffProfiles: isolated.profiles,
+  }).length, 0);
+});
+
+test("keeps placement gates and zero-demand protection during capacity transfer", () => {
+  const cases = [
+    {
+      label: "hope off",
+      options: {
+        incomingPreferences: [{
+          date: "2026-09-07",
+          preferenceType: "day_off",
+          startTime: null,
+          endTime: null,
+        }],
+      },
+    },
+    { label: "holiday", options: { holidayNotAllowed: true } },
+    {
+      label: "consecutive work",
+      options: {
+        incomingScheduledDays: workDays([
+          "2026-09-01",
+          "2026-09-02",
+          "2026-09-03",
+          "2026-09-04",
+          "2026-09-05",
+          "2026-09-06",
+        ], "G"),
+      },
+    },
+    {
+      label: "public day off",
+      options: {
+        incomingScheduledDays: [{
+          staffId: "G",
+          date: "2026-09-07",
+          dayType: "day_off",
+          segments: [],
+        }],
+      },
+    },
+    {
+      label: "weekday unavailable",
+      options: {
+        configureIncoming(profile) {
+          profile.workConditions[0].availability[1] = {
+            weekday: 1,
+            available: false,
+            startTime: null,
+            endTime: null,
+          };
+        },
+      },
+    },
+    {
+      label: "daily limit",
+      options: {
+        configureWorkLimits(workLimits) {
+          workLimits.workLimitProfiles.find((profile) => profile.staffId === "G").dailyLimitMinutes = 165;
+        },
+      },
+    },
+    {
+      label: "weekly limit",
+      options: {
+        configureWorkLimits(workLimits) {
+          const profile = workLimits.workLimitProfiles.find((entry) => entry.staffId === "G");
+          profile.workConditions[0].weeklyMinutesLimit = 300;
+          profile.existingDays = [{
+            date: "2026-09-08",
+            scheduledWorkMinutes: 180,
+            breakMinutes: 0,
+          }];
+        },
+      },
+    },
+    {
+      label: "weekly days",
+      options: {
+        configureWorkLimits(workLimits) {
+          const profile = workLimits.workLimitProfiles.find((entry) => entry.staffId === "G");
+          profile.workConditions[0].weeklyWorkDaysMax = 1;
+          profile.existingDays = [{
+            date: "2026-09-08",
+            scheduledWorkMinutes: 180,
+            breakMinutes: 0,
+          }];
+        },
+      },
+    },
+    { label: "zero demand", options: { zeroDemandSlotIndex: 5 } },
+    {
+      label: "fixed preference",
+      options: {
+        sourcePreferences: [{
+          date: "2026-09-07",
+          preferenceType: "work_time",
+          startTime: "09:00",
+          endTime: "14:15",
+        }],
+      },
+    },
+  ];
+
+  for (const entry of cases) {
+    const scenario = capacityTransferScenario(entry.options);
+    const result = calculateAutomaticChildcareShift(
+      scenario.requirements,
+      scenario.profiles,
+      scenario.workLimits,
+    );
+    assert.equal(enumerateAutomaticCapacityTransferCandidates({
+      placement: result,
+      staffProfiles: scenario.profiles,
+    }).length, 0, entry.label);
+  }
 });
 
 test("promotes a zero-minute part-time day into a shortage-rooted three-hour block", () => {
