@@ -189,7 +189,10 @@ test("keeps protected pages behind the loopback-only authentication gateway", as
   assert.match(worker, /\/parent\/schedule/);
   assert.match(authHttp, /isParentSchedulePage/);
   assert.match(authHttp, /\/parent\/schedule/);
-  assert.match(worker, /!env\.NURSERY_GATEWAY_SECRET \|\| receivedSecret !== env\.NURSERY_GATEWAY_SECRET/);
+  assert.match(worker, /resolveGatewaySecret\(env\)/);
+  assert.match(worker, /!expectedSecret \|\| receivedSecret !== expectedSecret/);
+  assert.match(runner, /NURSERY_NODE_PRODUCTION_RUNTIME: String\(mode === "start"\)/);
+  assert.match(viteConfig, /command === "serve" && !isPreview/);
   assert.match(viteConfig, /NURSERY_GATEWAY_SECRET: process\.env\.NURSERY_GATEWAY_SECRET \?\? ""/);
   assert.match(readme, /内部ポートは確認用URLではありません/);
 });

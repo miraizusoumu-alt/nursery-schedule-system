@@ -15,9 +15,6 @@ const quickTunnelHost = ".trycloudflare.com";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  vars: {
-    NURSERY_GATEWAY_SECRET: process.env.NURSERY_GATEWAY_SECRET ?? "",
-  },
   d1_databases: d1
     ? [
         {
@@ -37,7 +34,7 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command, isPreview }) => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -62,7 +59,14 @@ export default defineConfig(async () => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
+        config: {
+          ...localBindingConfig,
+          // Only local dev needs the runner's secret as a Worker binding.
+          // Never serialize a runtime secret into production build metadata.
+          vars: command === "serve" && !isPreview
+            ? { NURSERY_GATEWAY_SECRET: process.env.NURSERY_GATEWAY_SECRET ?? "" }
+            : {},
+        },
       }),
     ],
   };

@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { resolveGatewaySecret } from "./gateway-secret.mjs";
 
 interface Env {
   ASSETS: Fetcher;
@@ -35,12 +36,13 @@ interface ExecutionContext {
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env | undefined, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (GATEWAY_PROTECTED_PATHS.has(url.pathname)) {
+      const expectedSecret = resolveGatewaySecret(env);
       const receivedSecret = request.headers.get(GATEWAY_SECRET_HEADER);
-      if (!env.NURSERY_GATEWAY_SECRET || receivedSecret !== env.NURSERY_GATEWAY_SECRET) {
+      if (!expectedSecret || receivedSecret !== expectedSecret) {
         return new Response("Not Found", {
           status: 404,
           headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
@@ -49,6 +51,7 @@ const worker = {
     }
 
     if (url.pathname === "/_vinext/image") {
+      if (!env?.ASSETS || !env?.IMAGES) return new Response("Not Found", { status: 404 });
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
       return handleImageOptimization(request, {
         fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),

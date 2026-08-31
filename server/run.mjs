@@ -52,6 +52,7 @@ const child = spawn(process.execPath, [vinextCli, mode, "--port", String(interna
     NURSERY_VERIFICATION_MODE: String(verificationMode),
     NURSERY_INTERNAL_PORT: String(internalPort),
     NURSERY_GATEWAY_SECRET: gatewaySecret,
+    NURSERY_NODE_PRODUCTION_RUNTIME: String(mode === "start"),
   },
   stdio: "inherit",
 });
