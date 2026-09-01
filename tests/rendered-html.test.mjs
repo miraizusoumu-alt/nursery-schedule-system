@@ -169,20 +169,22 @@ test("keeps the existing screens while domain and storage logic stay separated",
 });
 
 test("keeps protected pages behind the loopback-only authentication gateway", async () => {
-  const [runner, gateway, worker, authHttp, viteConfig, readme] = await Promise.all([
+  const [runner, gateway, worker, authHttp, viteConfig, readme, requestContext] = await Promise.all([
     readFile(new URL("../server/run.mjs", import.meta.url), "utf8"),
     readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../server/auth-http.mjs", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../server/request-context.mjs", import.meta.url), "utf8"),
   ]);
 
   assert.match(runner, /--hostname", "127\.0\.0\.1"/);
   assert.match(runner, /randomBytes\(32\)/);
   assert.match(runner, /NURSERY_GATEWAY_SECRET/);
   assert.match(gateway, /headers\[GATEWAY_SECRET_HEADER\] = gatewaySecret/);
-  assert.match(gateway, /key\.toLowerCase\(\) === GATEWAY_SECRET_HEADER/);
+  assert.match(gateway, /publicRequestHeaders\(request, context\)/);
+  assert.match(requestContext, /name === "x-nursery-gateway-secret"\) continue/);
   assert.match(gateway, /socket\.on\("error", \(\) => upstream\.destroy\(\)\)/);
   assert.match(gateway, /upstream\.on\("error", \(\) => socket\.destroy\(\)\)/);
   assert.match(worker, /GATEWAY_PROTECTED_PATHS/);

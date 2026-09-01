@@ -4,7 +4,7 @@
 
 ## 必要な環境
 
-- Node.js 22.16以上
+- Node.js 22.23.2（`package.json`と`.node-version`で固定）
 - npm
 - Windows上のローカル確認を想定
 
@@ -19,7 +19,35 @@ npm run dev
 
 通常利用者は必ず、起動時に表示される`http://localhost:3000/`または`http://PCのIPアドレス:3000/`を使用してください。背後のVinextは`127.0.0.1:3100`だけで待ち受け、起動時に生成する秘密情報を持つゲートウェイからの要求だけが保護画面を描画できます。内部ポートは確認用URLではありません。
 
-## 第2段階の認証確認
+## HTTPSリバースプロキシ配下での起動
+
+production起動は `npm run build` 後の `npm start` を使用します。内部Vinextは引き続きloopbackだけで待ち受けます。
+公開ポートは `NURSERY_PORT`、`PORT`、既定値の順で選択し、内部ポートとの同値や不正値はDBを開く前に拒否します。
+
+| 環境変数 | 用途 | 必須／任意 |
+|---|---|---|
+| `NURSERY_DB_PATH` | 正式DBとは別の永続ストレージ上のステージングDB | 公開時必須 |
+| `NURSERY_PORT` | 公開側待受ポート。`PORT`より優先 | 任意 |
+| `PORT` | ホスティングから渡される公開側待受ポート | 任意 |
+| `NURSERY_INTERNAL_PORT` | loopback上の内部Vinextポート | 任意 |
+| `NURSERY_SECURE_COOKIES` | HTTPS公開時にSecure Cookieを強制 | HTTPS公開時必須 |
+| `NURSERY_TRUST_PROXY` | 検証済みリバースプロキシのheader利用を明示的に有効化 | proxy公開時必須 |
+| `NURSERY_TRUSTED_PROXY_CIDRS` | 信頼する接続元IPまたはCIDRのカンマ区切り一覧 | proxy信頼有効時必須 |
+| `NURSERY_VERIFICATION_MODE` | ローカル検証DBを`.verification`内へ限定 | 任意 |
+
+`NURSERY_TRUST_PROXY`は未設定／`false`なら転送headerを無視し、`true`でも実際のTCP接続元が許可一覧に一致した場合だけ利用します。
+許可一覧は公開先で確認した最小範囲に限定し、全IPを信頼する設定は使用しません。内部Vinextを直接公開してはいけません。
+
+信頼する入口proxyは、クライアント由来の `X-Forwarded-Proto` / `X-Forwarded-Host` を削除して、正しい公開protocol / hostを各1値で上書きする必要があります。
+`http` / `https`以外、不正host、重複header、カンマ区切りのprotocol / host、片方だけの指定は400で拒否します。
+複数proxyを経由する場合も入口から正規化済みの公開protocol / hostを渡してください。曖昧なchainを先頭値で推測しません。
+`X-Forwarded-For`はproxyが実際の接続元を上書きまたは末尾追加することが前提です。IPのみを許可し、TCP接続元から右側の信頼済みproxyをたどり、最初の非信頼IPをログインrate limitへ使用します。
+標準 `Forwarded` と `X-Real-IP` は採用せず、内部転送時にも削除します。未検証の任意headerを内部Vinextへ引き継ぎません。
+
+公開先の接続元範囲・header上書き契約を確認できない場合は、proxy信頼を有効化せず公開を停止してください。
+この設定はクラウドのアクセス制限や永続ディスク、バックアップ設定を代替しません。ローカル疎通は専用の一時DBだけで実施してください。
+
+## 認証確認手順
 
 最初に、架空の開発用アカウントを作成します。
 

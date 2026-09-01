@@ -10,26 +10,10 @@ import { handleAdminScheduleApiRequest } from "./admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "./family-schedule-http.mjs";
 import { handleStaffManagementApiRequest } from "./staff-management-http.mjs";
 import { handleStaffScheduleApiRequest } from "./staff-schedule-http.mjs";
+import { createProxyTrust, InvalidRequestContext, publicRequestHeaders, resolveRequestContext } from "./request-context.mjs";
 
 const MAX_AUTH_BODY_BYTES = 1024 * 1024;
 const GATEWAY_SECRET_HEADER = "x-nursery-gateway-secret";
-
-function incomingUrl(request, publicPort) {
-  const host = request.headers.host || `localhost:${publicPort}`;
-  const protocol = request.socket.encrypted ? "https" : "http";
-  return `${protocol}://${host}${request.url || "/"}`;
-}
-
-function requestHeaders(request) {
-  const headers = new Headers();
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    const key = request.rawHeaders[index];
-    const value = request.rawHeaders[index + 1];
-    if (key && value !== undefined) headers.append(key, value);
-  }
-  headers.set("x-forwarded-for", request.socket.remoteAddress || "unknown");
-  return headers;
-}
 
 async function readBody(request) {
   const chunks = [];
@@ -42,11 +26,11 @@ async function readBody(request) {
   return chunks.length ? Buffer.concat(chunks) : undefined;
 }
 
-async function toFetchRequest(request, publicPort, includeBody) {
+async function toFetchRequest(request, context, includeBody) {
   const body = includeBody && request.method !== "GET" && request.method !== "HEAD" ? await readBody(request) : undefined;
-  return new Request(incomingUrl(request, publicPort), {
+  return new Request(context.url, {
     method: request.method,
-    headers: requestHeaders(request),
+    headers: publicRequestHeaders(request, context),
     body,
   });
 }
@@ -62,12 +46,9 @@ async function sendFetchResponse(response, outgoing) {
   outgoing.end(body);
 }
 
-function proxyHttp(incoming, outgoing, internalPort, gatewaySecret) {
-  const headers = { ...incoming.headers };
+function proxyHttp(incoming, outgoing, internalPort, gatewaySecret, context) {
+  const headers = publicRequestHeaders(incoming, context);
   headers.host = `127.0.0.1:${internalPort}`;
-  headers["x-forwarded-host"] = incoming.headers.host;
-  headers["x-forwarded-proto"] = incoming.socket.encrypted ? "https" : "http";
-  headers["x-forwarded-for"] = incoming.socket.remoteAddress || "unknown";
   headers[GATEWAY_SECRET_HEADER] = gatewaySecret;
   const proxy = http.request({
     hostname: "127.0.0.1",
@@ -86,14 +67,13 @@ function proxyHttp(incoming, outgoing, internalPort, gatewaySecret) {
   incoming.pipe(proxy);
 }
 
-function proxyUpgrade(request, socket, head, internalPort, gatewaySecret) {
+function proxyUpgrade(request, socket, head, internalPort, gatewaySecret, context) {
   const upstream = net.connect(internalPort, "127.0.0.1", () => {
     const lines = [`${request.method} ${request.url} HTTP/${request.httpVersion}`];
-    for (let index = 0; index < request.rawHeaders.length; index += 2) {
-      const key = request.rawHeaders[index];
-      if (key.toLowerCase() === GATEWAY_SECRET_HEADER) continue;
-      const value = key.toLowerCase() === "host" ? `127.0.0.1:${internalPort}` : request.rawHeaders[index + 1];
-      lines.push(`${key}: ${value}`);
+    const headers = publicRequestHeaders(request, context);
+    headers.host = `127.0.0.1:${internalPort}`;
+    for (const [key, value] of Object.entries(headers)) {
+      for (const item of Array.isArray(value) ? value : [value]) lines.push(`${key}: ${item}`);
     }
     lines.push(`${GATEWAY_SECRET_HEADER}: ${gatewaySecret}`);
     upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
@@ -112,6 +92,7 @@ export async function createGateway({
   gatewaySecret,
   verificationMode = process.env.NURSERY_VERIFICATION_MODE === "true",
   runtimeSecureCookies = process.env.NURSERY_SECURE_COOKIES === "true",
+  isTrustedProxy = createProxyTrust({ enabled: process.env.NURSERY_TRUST_PROXY, trustedCidrs: process.env.NURSERY_TRUSTED_PROXY_CIDRS }),
 } = {}) {
   if (typeof gatewaySecret !== "string" || gatewaySecret.length < 32) {
     throw new Error("認証ゲートウェイの内部接続情報が正しくありません。");
@@ -131,9 +112,10 @@ export async function createGateway({
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {
+      const context = resolveRequestContext(incoming, { publicPort, isTrustedProxy });
       const isApi = incoming.url?.startsWith("/api/") === true;
       if (isApi) {
-        const request = await toFetchRequest(incoming, publicPort, true);
+        const request = await toFetchRequest(incoming, context, true);
         const adminScheduleResponse = await handleAdminScheduleApiRequest(request, { service: familyScheduleService, authService: service });
         if (adminScheduleResponse) return await sendFetchResponse(adminScheduleResponse, outgoing);
         const staffScheduleResponse = await handleStaffScheduleApiRequest(request, { service: staffScheduleService, authService: service });
@@ -145,18 +127,25 @@ export async function createGateway({
         const response = await handleAuthApiRequest(request, { service, runtimeSecureCookies });
         if (response) return await sendFetchResponse(response, outgoing);
       } else if (incoming.method === "GET" || incoming.method === "HEAD") {
-        const request = await toFetchRequest(incoming, publicPort, false);
+        const request = await toFetchRequest(incoming, context, false);
         const response = authorizeProtectedPage(request, service);
         if (response) return await sendFetchResponse(response, outgoing);
       }
-      proxyHttp(incoming, outgoing, internalPort, gatewaySecret);
+      proxyHttp(incoming, outgoing, internalPort, gatewaySecret, context);
     } catch (error) {
-      const status = error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413 : 500;
+      const status = error instanceof InvalidRequestContext ? 400 : error instanceof Error && error.message === "BODY_TOO_LARGE" ? 413 : 500;
       outgoing.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      outgoing.end(JSON.stringify({ ok: false, message: status === 413 ? "送信内容が大きすぎます。" : "処理を完了できませんでした。" }));
+      outgoing.end(JSON.stringify({ ok: false, message: status === 400 ? "リクエストの接続情報が正しくありません。" : status === 413 ? "送信内容が大きすぎます。" : "処理を完了できませんでした。" }));
     }
   });
-  server.on("upgrade", (request, socket, head) => proxyUpgrade(request, socket, head, internalPort, gatewaySecret));
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      const context = resolveRequestContext(request, { publicPort, isTrustedProxy });
+      proxyUpgrade(request, socket, head, internalPort, gatewaySecret, context);
+    } catch {
+      socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+    }
+  });
 
   await new Promise((resolve, reject) => {
     server.once("error", reject);

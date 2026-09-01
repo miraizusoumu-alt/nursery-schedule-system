@@ -6,11 +6,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveRuntimeDatabasePath } from "../db/sqlite.mjs";
 import { createGateway } from "./gateway.mjs";
+import { createProxyTrust } from "./request-context.mjs";
+import { resolveGatewayPorts } from "./runtime-config.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const mode = process.argv[2] === "start" ? "start" : "dev";
-const publicPort = Number(process.env.NURSERY_PORT || 3000);
-const internalPort = Number(process.env.NURSERY_INTERNAL_PORT || 3100);
+const { publicPort, internalPort } = resolveGatewayPorts();
+const isTrustedProxy = createProxyTrust({ enabled: process.env.NURSERY_TRUST_PROXY, trustedCidrs: process.env.NURSERY_TRUSTED_PROXY_CIDRS });
 const vinextCli = resolve(projectRoot, "node_modules", "vinext", "dist", "cli.js");
 const gatewaySecret = randomBytes(32).toString("base64url");
 const verificationMode = process.env.NURSERY_VERIFICATION_MODE === "true";
@@ -70,7 +72,7 @@ async function stop(exitCode = 0) {
 
 try {
   await waitForPort(internalPort);
-  gateway = await createGateway({ databasePath, verificationMode, publicPort, internalPort, gatewaySecret });
+  gateway = await createGateway({ databasePath, verificationMode, publicPort, internalPort, gatewaySecret, isTrustedProxy });
   console.log("\n認証付き試作サーバーを起動しました。");
   console.log(`PC: http://localhost:${publicPort}/`);
   for (const address of localIpv4Addresses()) console.log(`スマートフォン: http://${address}:${publicPort}/`);
