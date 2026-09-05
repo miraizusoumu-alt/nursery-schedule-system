@@ -6,7 +6,7 @@ import { resolveGatewaySecret } from "../worker/gateway-secret.mjs";
 
 const buildTimeSecret = process.env.NURSERY_GATEWAY_SECRET;
 const secret = () => randomBytes(32).toString("base64url");
-const protectedPaths = ["/account/password", "/admin/accounts", "/admin/schedules", "/parent/account", "/parent/schedule"];
+const protectedPaths = ["/account/password", "/admin/accounts", "/admin/schedules", "/parent/account", "/parent/schedule", "/staff/preferences"];
 
 function runtime(t, marker, value) {
   const names = ["NURSERY_NODE_PRODUCTION_RUNTIME", "NURSERY_GATEWAY_SECRET"];

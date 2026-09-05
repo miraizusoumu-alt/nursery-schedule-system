@@ -85,7 +85,7 @@ test("loads the Cabinet Office 2026-2027 holiday master and preserves existing w
       ).run(timestamp, timestamp);
 
       const migrated = await applyMigrations(database);
-      assert.deepEqual(migrated.applied, ["0012_hot_human_torch.sql"]);
+      assert.deepEqual(migrated.applied, ["0012_hot_human_torch.sql", "0013_grey_random.sql"]);
       assert.equal(database.prepare(
         "SELECT holiday_work_allowed FROM staff_work_condition_versions WHERE id = 'holiday-condition'",
       ).get().holiday_work_allowed, 1);

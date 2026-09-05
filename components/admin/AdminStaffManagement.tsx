@@ -59,6 +59,13 @@ type StaffMember = {
   employmentStartDate: string;
   employmentEndDate: string | null;
   status: "active" | "inactive";
+  account: {
+    id: string;
+    loginId: string;
+    temporaryPasswordIssuedAt: string | null;
+    lastLoginAt: string | null;
+    disabledAt: string | null;
+  } | null;
   roles: StaffRole[];
   qualifications: Qualification[];
   conditions: WorkCondition[];
@@ -66,6 +73,7 @@ type StaffMember = {
 };
 
 type Management = { staff: StaffMember[] };
+type StaffCredential = { accountId: string; staffId: string; loginId: string; temporaryPassword: string; issuedAt: string };
 
 type StaffForm = {
   name: string;
@@ -187,6 +195,7 @@ export function AdminStaffManagement() {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [credential, setCredential] = useState<StaffCredential | null>(null);
 
   const selectedStaff = useMemo(
     () => management?.staff.find((staff) => staff.id === selectedStaffId) ?? null,
@@ -239,6 +248,7 @@ export function AdminStaffManagement() {
         })
       : defaultAvailability());
     setConditionDirty(false);
+    setCredential(null);
   }, []);
 
   const staffDirty = useMemo(() => {
@@ -441,6 +451,46 @@ export function AdminStaffManagement() {
           </form> : <div className="admin-staff-empty"><AdminIcon name="staff" size={28} /><strong>職員を選択してください</strong><span>職員名を選ぶと登録内容を確認できます。新しく登録する場合は「＋ 職員を登録」を押してください。</span></div>}
 
           {!isNew && selectedStaff ? <>
+            <div className="admin-staff-subsection">
+              <h3><AdminIcon name="badge" />職員ログイン</h3>
+              {selectedStaff.account ? <div className="staff-account-summary">
+                <dl className="auth-details">
+                  <div><dt>ログインID</dt><dd className="credential-value">{selectedStaff.account.loginId}</dd></div>
+                  <div><dt>最終ログイン</dt><dd>{selectedStaff.account.lastLoginAt ? formatDateTime(selectedStaff.account.lastLoginAt) : "未ログイン"}</dd></div>
+                </dl>
+                <button type="button" disabled={busy !== ""} onClick={() => {
+                  if (!window.confirm(`${selectedStaff.name}の職員パスワードを再発行しますか？`)) return;
+                  void run("staff-account", async () => {
+                    const result = await api<{ credential: StaffCredential }>(`/api/admin/staff-accounts/${encodeURIComponent(selectedStaff.id)}/reissue-password`, { method: "POST", body: {} });
+                    setCredential(result.credential);
+                    const refreshed = await api<{ management: Management }>("/api/admin/staff");
+                    acceptManagement(refreshed.management, selectedStaff.id);
+                    setCredential(result.credential);
+                    setMessage("職員パスワードを再発行しました。今回表示される内容を安全に本人へ渡してください。");
+                  });
+                }}>{busy === "staff-account" ? "処理中..." : "パスワードを再発行"}</button>
+              </div> : <div className="staff-account-summary">
+                <p className="admin-schedule-note">この職員の本人用ログインは未発行です。</p>
+                <button type="button" disabled={busy !== ""} onClick={() => {
+                  if (!window.confirm(`${selectedStaff.name}の職員ログインを発行しますか？`)) return;
+                  void run("staff-account", async () => {
+                    const result = await api<{ credential: StaffCredential }>("/api/admin/staff-accounts", { method: "POST", body: { staffId: selectedStaff.id } });
+                    const refreshed = await api<{ management: Management }>("/api/admin/staff");
+                    acceptManagement(refreshed.management, selectedStaff.id);
+                    setCredential(result.credential);
+                    setMessage("職員ログインを発行しました。今回表示される内容を安全に本人へ渡してください。");
+                  });
+                }}>{busy === "staff-account" ? "発行中..." : "職員ログインを発行"}</button>
+              </div>}
+              {credential ? <div className="credential-notice" role="status">
+                <div><strong>今回だけ表示されるログイン情報</strong><button type="button" onClick={() => setCredential(null)}>閉じる</button></div>
+                <dl>
+                  <div><dt>ログインID</dt><dd className="credential-value">{credential.loginId}</dd></div>
+                  <div><dt>一時パスワード</dt><dd className="credential-value">{credential.temporaryPassword}</dd></div>
+                </dl>
+              </div> : null}
+            </div>
+
             <div className="admin-staff-subsection">
               <h3><AdminIcon name="badge" />担当区分</h3>
               <p className="admin-schedule-note">園内で担当する仕事です。担当区分の「保育士」は、法的な保育士資格の登録とは別です。</p>

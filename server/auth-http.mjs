@@ -119,10 +119,16 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
   if (!url.pathname.startsWith("/api/")) return null;
 
   try {
-    if (request.method === "POST" && (url.pathname === "/api/auth/login/family" || url.pathname === "/api/auth/login/admin")) {
+    if (request.method === "POST" && new Set([
+      "/api/auth/login/family",
+      "/api/auth/login/admin",
+      "/api/auth/login/staff",
+    ]).has(url.pathname)) {
       assertSameOrigin(request);
       const body = await readJson(request);
-      const scope = url.pathname.endsWith("/family") ? "family" : "administrator";
+      const scope = url.pathname.endsWith("/family")
+        ? "family"
+        : url.pathname.endsWith("/staff") ? "staff" : "administrator";
       const result = await service.login({ scope, loginId: body.loginId, password: body.password, source: requestSource(request) });
       const headers = sessionCookieHeaders(result.session, result.settings, request, runtimeSecureCookies);
       return json({
@@ -130,7 +136,9 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
         actor: service.publicActor(result.actor),
         redirectTo: result.actor.type === "family"
           ? "/parent/schedule"
-          : result.actor.mustChangePassword ? "/account/password" : "/admin/accounts",
+          : result.actor.type === "staff"
+            ? "/staff/preferences"
+            : result.actor.mustChangePassword ? "/account/password" : "/admin/accounts",
       }, 200, headers);
     }
 
@@ -155,7 +163,9 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
       return json({
         ok: true,
         actor: service.publicActor(result.actor),
-        redirectTo: result.actor.type === "family" ? "/parent/schedule" : "/admin/accounts",
+        redirectTo: result.actor.type === "family"
+          ? "/parent/schedule"
+          : result.actor.type === "staff" ? "/staff/preferences" : "/admin/accounts",
       }, 200, headers);
     }
 
@@ -220,6 +230,20 @@ export async function handleAuthApiRequest(request, { service, runtimeSecureCook
       return json({ ok: true, credential: await service.issueAdministrator(session.actor, body) }, 201);
     }
 
+    if (request.method === "POST" && url.pathname === "/api/admin/staff-accounts") {
+      const session = requireSession(request, service, { type: "administrator" });
+      assertCsrf(request, session);
+      const body = await readJson(request);
+      return json({ ok: true, credential: await service.issueStaffAccount(session.actor, body) }, 201);
+    }
+
+    const staffPasswordReissue = routeMatch(url.pathname, /^\/api\/admin\/staff-accounts\/([^/]+)\/reissue-password$/);
+    if (request.method === "POST" && staffPasswordReissue) {
+      const session = requireSession(request, service, { type: "administrator" });
+      assertCsrf(request, session);
+      return json({ ok: true, credential: await service.reissueStaffPassword(session.actor, staffPasswordReissue[0]) });
+    }
+
     const administratorReissue = routeMatch(url.pathname, /^\/api\/admin\/administrators\/([^/]+)\/reissue-password$/);
     if (request.method === "POST" && administratorReissue) {
       const session = requireSession(request, service, { type: "administrator" });
@@ -272,14 +296,15 @@ export function authorizeProtectedPage(request, service) {
   const isParentPage = url.pathname === "/parent/account";
   const isParentSchedulePage = url.pathname === "/parent/schedule";
   const isAdministratorPage = url.pathname === "/admin/accounts" || url.pathname === "/admin/schedules";
+  const isStaffPage = url.pathname === "/staff/preferences";
   const isPasswordPage = url.pathname === "/account/password";
   const isPrototypeTop = url.pathname === "/";
-  if (!isParentPage && !isParentSchedulePage && !isAdministratorPage && !isPasswordPage && !isPrototypeTop) return null;
+  if (!isParentPage && !isParentSchedulePage && !isAdministratorPage && !isStaffPage && !isPasswordPage && !isPrototypeTop) return null;
 
   const session = currentSession(request, service);
   if (isPrototypeTop && !session) return null;
   if (!session) {
-    const loginPath = isAdministratorPage ? "/auth/admin" : "/auth/parent";
+    const loginPath = isAdministratorPage ? "/auth/admin" : isStaffPage ? "/auth/staff" : "/auth/parent";
     return Response.redirect(new URL(loginPath, request.url), 303);
   }
   if (isPasswordPage && session.actor.type === "family") {
@@ -292,6 +317,9 @@ export function authorizeProtectedPage(request, service) {
     return new Response("この画面を利用する権限がありません。", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   if (isAdministratorPage && session.actor.type !== "administrator") {
+    return new Response("この画面を利用する権限がありません。", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+  if (isStaffPage && session.actor.type !== "staff") {
     return new Response("この画面を利用する権限がありません。", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   return null;

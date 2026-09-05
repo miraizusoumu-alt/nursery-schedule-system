@@ -4,11 +4,13 @@ import { applyMigrations, openDatabase, resolveRuntimeDatabasePath } from "../db
 import { createAuthService } from "../lib/server/auth/service.mjs";
 import { createFamilyScheduleService } from "../lib/server/family-schedule/service.mjs";
 import { createStaffManagementService } from "../lib/server/staff-management/service.mjs";
+import { createStaffPreferenceService } from "../lib/server/staff-preference/service.mjs";
 import { createStaffScheduleService } from "../lib/server/staff-schedule/service.mjs";
 import { authorizeProtectedPage, handleAuthApiRequest } from "./auth-http.mjs";
 import { handleAdminScheduleApiRequest } from "./admin-schedule-http.mjs";
 import { handleFamilyScheduleApiRequest } from "./family-schedule-http.mjs";
 import { handleStaffManagementApiRequest } from "./staff-management-http.mjs";
+import { handleStaffPreferenceApiRequest } from "./staff-preference-http.mjs";
 import { handleStaffScheduleApiRequest } from "./staff-schedule-http.mjs";
 import { createProxyTrust, InvalidRequestContext, publicRequestHeaders, resolveRequestContext } from "./request-context.mjs";
 
@@ -103,6 +105,7 @@ export async function createGateway({
   const service = createAuthService({ database });
   const familyScheduleService = createFamilyScheduleService({ database });
   const staffManagementService = createStaffManagementService({ database });
+  const staffPreferenceService = createStaffPreferenceService({ database });
   const staffScheduleService = createStaffScheduleService({
     database,
     automaticRequirementSlotsProvider: (actor, input) => {
@@ -120,6 +123,8 @@ export async function createGateway({
         if (adminScheduleResponse) return await sendFetchResponse(adminScheduleResponse, outgoing);
         const staffScheduleResponse = await handleStaffScheduleApiRequest(request, { service: staffScheduleService, authService: service });
         if (staffScheduleResponse) return await sendFetchResponse(staffScheduleResponse, outgoing);
+        const staffPreferenceResponse = await handleStaffPreferenceApiRequest(request, { service: staffPreferenceService, authService: service });
+        if (staffPreferenceResponse) return await sendFetchResponse(staffPreferenceResponse, outgoing);
         const staffManagementResponse = await handleStaffManagementApiRequest(request, { service: staffManagementService, authService: service });
         if (staffManagementResponse) return await sendFetchResponse(staffManagementResponse, outgoing);
         const familyScheduleResponse = await handleFamilyScheduleApiRequest(request, { service: familyScheduleService, authService: service });

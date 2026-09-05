@@ -171,6 +171,20 @@ type DraftReview = {
   hasIssues: boolean;
   confirmation: DraftConfirmation;
 };
+type StaffPreferenceOverview = {
+  period: null | { id: string; targetMonth: string; deadlineAt: string; status: "draft" | "open" | "closed"; writable: boolean };
+  staff: Array<{
+    id: string;
+    staffCode: string;
+    name: string;
+    submissionStatus: "unentered" | "draft" | "submitted";
+    submittedAt: string | null;
+    revision: number;
+    dayOffCount: number;
+    hasWorkTimePreference: boolean;
+    administratorInput: boolean;
+  }>;
+};
 
 const dayTypeLabels: Record<DayType, string> = {
   work: "勤務",
@@ -223,6 +237,21 @@ function formatMonth(value: string) {
 function formatDate(value: string) {
   const [, month, day] = value.split("-");
   return `${Number(month)}/${Number(day)}`;
+}
+
+function tokyoDateTimeInput(value: string | null) {
+  if (!value) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(value));
+  const item = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${item.year}-${item.month}-${item.day}T${item.hour}:${item.minute}`;
 }
 
 function formatTableDate(value: string) {
@@ -431,6 +460,9 @@ export function AdminStaffScheduleManagement() {
   const [error, setError] = useState("");
   const [automaticPreview, setAutomaticPreview] = useState<AutomaticPreview | null>(null);
   const [draftReview, setDraftReview] = useState<DraftReview | null>(null);
+  const [preferenceOverview, setPreferenceOverview] = useState<StaffPreferenceOverview | null>(null);
+  const [preferenceDeadline, setPreferenceDeadline] = useState("");
+  const [preferencePeriodStatus, setPreferencePeriodStatus] = useState<"draft" | "open" | "closed">("draft");
   const [dayEditorDirty, setDayEditorDirty] = useState(false);
   const [preferenceEditorDirty, setPreferenceEditorDirty] = useState(false);
   const [scheduleHalf, setScheduleHalf] = useState<ScheduleHalf>("first");
@@ -462,6 +494,20 @@ export function AdminStaffScheduleManagement() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [initialMonth, load]);
+
+  const loadPreferenceOverview = useCallback(async (month: string) => {
+    const result = await api<{ overview: StaffPreferenceOverview }>(`/api/admin/staff-preferences?targetMonth=${encodeURIComponent(month)}`);
+    setPreferenceOverview(result.overview);
+    setPreferenceDeadline(tokyoDateTimeInput(result.overview.period?.deadlineAt ?? null));
+    setPreferencePeriodStatus(result.overview.period?.status ?? "draft");
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadPreferenceOverview(targetMonth).catch((caught) => setError(caught instanceof Error ? caught.message : "職員希望の提出状況を読み込めませんでした。"));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadPreferenceOverview, targetMonth]);
 
   const selectedStaff = schedule?.staff.find((staff) => staff.id === selectedStaffId) ?? null;
   useEffect(() => {
@@ -695,6 +741,51 @@ export function AdminStaffScheduleManagement() {
         </details> : null}
         {schedule?.month?.status === "draft" ? <p className="auth-message info">すでに作成中のシフトがあります。自動作成では上書きしません。</p> : null}
         {schedule?.month?.status === "confirmed" ? <p className="auth-message info">確定済みのシフトがあります。自動作成では変更しません。</p> : null}
+      </section>
+
+      <section className="auth-section staff-preference-overview">
+        <div className="auth-section-heading">
+          <div><span>{formatMonth(targetMonth)}</span><h3>職員希望の提出状況</h3></div>
+          <span className={`admin-state ${preferenceOverview?.period?.status === "open" ? "confirmed" : "draft"}`}>
+            {!preferenceOverview?.period ? "期間未設定" : preferenceOverview.period.status === "open" ? "受付中" : preferenceOverview.period.status === "closed" ? "受付終了" : "準備中"}
+          </span>
+        </div>
+        <form className="staff-preference-period-form" onSubmit={(event) => {
+          event.preventDefault();
+          if (!preferenceDeadline) {
+            setError("職員希望の提出期限を入力してください。");
+            return;
+          }
+          void run("preference-period", async () => {
+            const result = await api<{ overview: StaffPreferenceOverview }>("/api/admin/staff-preferences/period", { method: "PUT", body: {
+              targetMonth,
+              deadlineAt: new Date(`${preferenceDeadline}:00+09:00`).toISOString(),
+              status: preferencePeriodStatus,
+            } });
+            setPreferenceOverview(result.overview);
+            setPreferenceDeadline(tokyoDateTimeInput(result.overview.period?.deadlineAt ?? null));
+            setMessage("職員希望の提出期間を保存しました。");
+          });
+        }}>
+          <label><span>提出期限（日本時間）</span><input required type="datetime-local" value={preferenceDeadline} onChange={(event) => setPreferenceDeadline(event.currentTarget.value)} /></label>
+          <label><span>受付状態</span><select value={preferencePeriodStatus} onChange={(event) => setPreferencePeriodStatus(event.currentTarget.value as "draft" | "open" | "closed")}><option value="draft">準備中</option><option value="open">受付中</option><option value="closed">受付終了</option></select></label>
+          <button type="submit" disabled={busy !== ""}>{busy === "preference-period" ? "保存中..." : "提出期間を保存"}</button>
+        </form>
+        {preferenceOverview ? <div className="staff-preference-overview-list">
+          {preferenceOverview.staff.map((staff) => {
+            const status = staff.submissionStatus === "submitted"
+              ? "提出済み"
+              : staff.submissionStatus === "draft"
+                ? "入力途中"
+                : staff.administratorInput ? "管理者入力あり・本人未提出" : "未入力";
+            return <article key={staff.id}>
+              <div><strong>{staff.name}</strong><span>{staff.staffCode}</span></div>
+              <span className={`admin-state ${staff.submissionStatus === "submitted" ? "confirmed" : staff.submissionStatus === "draft" ? "warning" : "draft"}`}>{status}</span>
+              <div className="staff-preference-overview-counts"><span>希望休 {staff.dayOffCount}日</span><span>{staff.hasWorkTimePreference ? "時間希望あり" : "時間希望なし"}</span></div>
+            </article>;
+          })}
+          {!preferenceOverview.staff.length ? <p className="admin-schedule-note">この月の対象職員はいません。</p> : null}
+        </div> : <p className="admin-schedule-note">提出状況を読み込んでいます。</p>}
       </section>
 
       {schedule?.viewedVersion?.isCurrent && schedule.viewedVersion.status === "draft" && hasUnsavedEditorChanges

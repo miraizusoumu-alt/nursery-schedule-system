@@ -8,7 +8,7 @@ function routeMatch(pathname, pattern) {
 
 export async function handleStaffManagementApiRequest(request, { service, authService } = {}) {
   const url = new URL(request.url);
-  if (!url.pathname.startsWith("/api/admin/staff")) return null;
+  if (url.pathname !== "/api/admin/staff" && !url.pathname.startsWith("/api/admin/staff/")) return null;
 
   try {
     const session = requireSession(request, authService, { type: "administrator" });

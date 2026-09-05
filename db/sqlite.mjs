@@ -58,6 +58,12 @@ export const REQUIRED_APPLICATION_TABLES_BY_MIGRATION = {
   "0010_careless_leper_queen.sql": [],
   "0011_melted_surge.sql": ["staff_weekly_availability_candidates"],
   "0012_hot_human_torch.sql": ["national_holidays"],
+  "0013_grey_random.sql": [
+    "staff_accounts",
+    "staff_preference_draft_days",
+    "staff_preference_submission_periods",
+    "staff_preference_submissions",
+  ],
 };
 
 export const REQUIRED_APPLICATION_TABLES = [

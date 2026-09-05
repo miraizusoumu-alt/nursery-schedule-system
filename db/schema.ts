@@ -158,6 +158,27 @@ export const staffMembers = sqliteTable(
   ],
 );
 
+export const staffAccounts = sqliteTable(
+  "staff_accounts",
+  {
+    id: text("id").primaryKey(),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    loginId: text("login_id").notNull(),
+    passwordHash: text("password_hash"),
+    temporaryPasswordIssuedAt: text("temporary_password_issued_at"),
+    passwordChangedAt: text("password_changed_at"),
+    credentialVersion: integer("credential_version").notNull().default(1),
+    lastLoginAt: text("last_login_at"),
+    disabledAt: text("disabled_at"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_accounts_staff_id").on(table.staffId),
+    uniqueIndex("uq_staff_accounts_login_id").on(table.loginId),
+    index("idx_staff_accounts_disabled_at").on(table.disabledAt),
+  ],
+);
+
 export const staffQualifications = sqliteTable(
   "staff_qualifications",
   {
@@ -378,8 +399,10 @@ export const staffSchedulePreferences = sqliteTable(
     preferenceType: text("preference_type").notNull(),
     startTime: text("start_time"),
     endTime: text("end_time"),
-    createdByAdministratorId: text("created_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
-    updatedByAdministratorId: text("updated_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    createdByAdministratorId: text("created_by_administrator_id").references(() => administrators.id, { onDelete: "restrict" }),
+    updatedByAdministratorId: text("updated_by_administrator_id").references(() => administrators.id, { onDelete: "restrict" }),
+    createdByStaffAccountId: text("created_by_staff_account_id").references(() => staffAccounts.id, { onDelete: "restrict" }),
+    updatedByStaffAccountId: text("updated_by_staff_account_id").references(() => staffAccounts.id, { onDelete: "restrict" }),
     ...timestamps,
   },
   (table) => [
@@ -389,6 +412,93 @@ export const staffSchedulePreferences = sqliteTable(
     check("chk_staff_schedule_preferences_type", sql`${table.preferenceType} in ('day_off', 'work_time')`),
     check(
       "chk_staff_schedule_preferences_payload",
+      sql`(${table.preferenceType} = 'day_off' and ${table.startTime} is null and ${table.endTime} is null)
+          or (${table.preferenceType} = 'work_time'
+            and ${table.startTime} glob '[0-2][0-9]:[0-5][0-9]'
+            and ${table.endTime} glob '[0-2][0-9]:[0-5][0-9]'
+            and substr(${table.startTime}, 4, 2) in ('00', '15', '30', '45')
+            and substr(${table.endTime}, 4, 2) in ('00', '15', '30', '45')
+            and ${table.startTime} >= '06:30'
+            and ${table.endTime} <= '20:30'
+            and ${table.startTime} < ${table.endTime})`,
+    ),
+    check(
+      "chk_staff_schedule_preferences_created_by",
+      sql`(${table.createdByAdministratorId} is not null and ${table.createdByStaffAccountId} is null)
+          or (${table.createdByAdministratorId} is null and ${table.createdByStaffAccountId} is not null)`,
+    ),
+    check(
+      "chk_staff_schedule_preferences_updated_by",
+      sql`(${table.updatedByAdministratorId} is not null and ${table.updatedByStaffAccountId} is null)
+          or (${table.updatedByAdministratorId} is null and ${table.updatedByStaffAccountId} is not null)`,
+    ),
+  ],
+);
+
+export const staffPreferenceSubmissionPeriods = sqliteTable(
+  "staff_preference_submission_periods",
+  {
+    id: text("id").primaryKey(),
+    targetMonth: text("target_month").notNull(),
+    deadlineAt: text("deadline_at").notNull(),
+    status: text("status").notNull().default("draft"),
+    createdByAdministratorId: text("created_by_administrator_id").notNull().references(() => administrators.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_preference_submission_periods_month").on(table.targetMonth),
+    index("idx_staff_preference_submission_periods_status").on(table.status, table.targetMonth),
+    check(
+      "chk_staff_preference_submission_periods_month",
+      sql`${table.targetMonth} glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]' and substr(${table.targetMonth}, 6, 2) between '01' and '12'`,
+    ),
+    check("chk_staff_preference_submission_periods_status", sql`${table.status} in ('draft', 'open', 'closed')`),
+  ],
+);
+
+export const staffPreferenceSubmissions = sqliteTable(
+  "staff_preference_submissions",
+  {
+    id: text("id").primaryKey(),
+    submissionPeriodId: text("submission_period_id").notNull().references(() => staffPreferenceSubmissionPeriods.id, { onDelete: "restrict" }),
+    staffId: text("staff_id").notNull().references(() => staffMembers.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("draft"),
+    revision: integer("revision").notNull().default(1),
+    basePreferencesHash: text("base_preferences_hash").notNull(),
+    submittedAt: text("submitted_at"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_preference_submissions_period_staff").on(table.submissionPeriodId, table.staffId),
+    index("idx_staff_preference_submissions_staff_status").on(table.staffId, table.status),
+    check("chk_staff_preference_submissions_status", sql`${table.status} in ('draft', 'submitted')`),
+    check("chk_staff_preference_submissions_revision", sql`${table.revision} > 0`),
+    check(
+      "chk_staff_preference_submissions_submitted_at",
+      sql`(${table.status} = 'draft' and ${table.submittedAt} is null)
+          or (${table.status} = 'submitted' and ${table.submittedAt} is not null)`,
+    ),
+  ],
+);
+
+export const staffPreferenceDraftDays = sqliteTable(
+  "staff_preference_draft_days",
+  {
+    id: text("id").primaryKey(),
+    submissionId: text("submission_id").notNull().references(() => staffPreferenceSubmissions.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    preferenceType: text("preference_type").notNull(),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("uq_staff_preference_draft_days_submission_date").on(table.submissionId, table.date),
+    index("idx_staff_preference_draft_days_date").on(table.date, table.submissionId),
+    check("chk_staff_preference_draft_days_date", sql`${table.date} glob '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+    check("chk_staff_preference_draft_days_type", sql`${table.preferenceType} in ('day_off', 'work_time')`),
+    check(
+      "chk_staff_preference_draft_days_payload",
       sql`(${table.preferenceType} = 'day_off' and ${table.startTime} is null and ${table.endTime} is null)
           or (${table.preferenceType} = 'work_time'
             and ${table.startTime} glob '[0-2][0-9]:[0-5][0-9]'
@@ -722,6 +832,7 @@ export const authSessions = sqliteTable(
     subjectType: text("subject_type").notNull(),
     familyAccountId: text("family_account_id").references(() => familyAccounts.id, { onDelete: "cascade" }),
     administratorId: text("administrator_id").references(() => administrators.id, { onDelete: "cascade" }),
+    staffAccountId: text("staff_account_id").references(() => staffAccounts.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull(),
     csrfTokenHash: text("csrf_token_hash").notNull(),
     credentialVersion: integer("credential_version").notNull(),
@@ -735,12 +846,14 @@ export const authSessions = sqliteTable(
     uniqueIndex("uq_auth_sessions_token_hash").on(table.tokenHash),
     index("idx_auth_sessions_family_account").on(table.familyAccountId, table.expiresAt),
     index("idx_auth_sessions_administrator").on(table.administratorId, table.expiresAt),
+    index("idx_auth_sessions_staff_account").on(table.staffAccountId, table.expiresAt),
     index("idx_auth_sessions_expiry").on(table.expiresAt, table.invalidatedAt),
-    check("chk_auth_sessions_subject_type", sql`${table.subjectType} in ('family', 'administrator')`),
+    check("chk_auth_sessions_subject_type", sql`${table.subjectType} in ('family', 'administrator', 'staff')`),
     check(
       "chk_auth_sessions_subject_reference",
-      sql`(${table.subjectType} = 'family' and ${table.familyAccountId} is not null and ${table.administratorId} is null)
-          or (${table.subjectType} = 'administrator' and ${table.familyAccountId} is null and ${table.administratorId} is not null)`,
+      sql`(${table.subjectType} = 'family' and ${table.familyAccountId} is not null and ${table.administratorId} is null and ${table.staffAccountId} is null)
+          or (${table.subjectType} = 'administrator' and ${table.familyAccountId} is null and ${table.administratorId} is not null and ${table.staffAccountId} is null)
+          or (${table.subjectType} = 'staff' and ${table.familyAccountId} is null and ${table.administratorId} is null and ${table.staffAccountId} is not null)`,
     ),
   ],
 );
@@ -758,7 +871,7 @@ export const authLoginAttempts = sqliteTable(
   (table) => [
     index("idx_auth_login_attempts_login").on(table.loginScope, table.loginIdHash, table.attemptedAt),
     index("idx_auth_login_attempts_source").on(table.loginScope, table.sourceHash, table.attemptedAt),
-    check("chk_auth_login_attempts_scope", sql`${table.loginScope} in ('family', 'administrator')`),
+    check("chk_auth_login_attempts_scope", sql`${table.loginScope} in ('family', 'administrator', 'staff')`),
   ],
 );
 

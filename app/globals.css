@@ -626,6 +626,192 @@
   font-weight: 700;
 }
 
+.staff-preference-page,
+.staff-preference-days,
+.staff-preference-confirmation,
+.staff-preference-confirm-groups,
+.staff-preference-overview,
+.staff-preference-overview-list {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.staff-preference-toolbar > label {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(180px, 320px);
+  gap: 10px;
+  align-items: center;
+}
+
+.staff-preference-toolbar > label > span,
+.staff-preference-period-form label > span,
+.staff-preference-day-times label > span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.staff-preference-status {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 14px;
+}
+
+.staff-preference-status > div {
+  display: grid;
+  gap: 4px;
+}
+
+.staff-preference-status > div span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.staff-preference-days article {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0 16px;
+}
+
+.staff-preference-days article h3,
+.staff-preference-confirm-groups h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.staff-preference-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.staff-preference-choice label {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 11px;
+  font-weight: 750;
+}
+
+.staff-preference-choice input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+}
+
+.staff-preference-day-times {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) auto minmax(0, 200px);
+  gap: 10px;
+  align-items: end;
+}
+
+.staff-preference-day-times label,
+.staff-preference-period-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.staff-preference-day-times > span {
+  padding-bottom: 13px;
+  font-weight: 800;
+}
+
+.staff-preference-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  background: rgba(247, 249, 248, 0.96);
+  padding: 12px 0;
+}
+
+.staff-preference-actions p {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.staff-preference-actions p.unsaved {
+  color: var(--warning);
+}
+
+.staff-preference-actions p.saved {
+  color: var(--accent-dark);
+}
+
+.staff-preference-actions > div {
+  display: flex;
+  gap: 8px;
+}
+
+.staff-preference-confirm-groups {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.staff-preference-confirm-groups > div {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+
+.staff-preference-confirm-groups ul {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-left: 1.2rem;
+}
+
+.staff-preference-period-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.6fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.staff-preference-overview-list article {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(120px, auto) minmax(190px, 1fr);
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.staff-preference-overview-list article > div:first-child,
+.staff-preference-overview-counts,
+.staff-account-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.staff-preference-overview-list article > div:first-child span,
+.staff-preference-overview-counts {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.staff-preference-overview-counts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .staff-schedule-segments {
   display: grid;
   gap: 10px;
@@ -739,6 +925,47 @@
   .staff-preference-times {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .staff-preference-toolbar .auth-section-heading,
+  .staff-preference-status,
+  .staff-preference-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .staff-preference-toolbar > label,
+  .staff-preference-day-times,
+  .staff-preference-period-form,
+  .staff-preference-overview-list article,
+  .staff-preference-confirm-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .staff-preference-choice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .staff-preference-choice label,
+  .staff-preference-day-times label,
+  .staff-preference-day-times select,
+  .staff-preference-actions > div,
+  .staff-preference-actions button {
+    width: 100%;
+  }
+
+  .staff-preference-day-times > span {
+    display: none;
+  }
+
+  .staff-preference-actions > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .staff-preference-overview-list article {
+    gap: 7px;
   }
 
   .staff-preference-options label,

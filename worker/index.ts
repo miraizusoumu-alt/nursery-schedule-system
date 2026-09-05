@@ -22,6 +22,7 @@ const GATEWAY_PROTECTED_PATHS = new Set([
   "/admin/schedules",
   "/parent/account",
   "/parent/schedule",
+  "/staff/preferences",
 ]);
 
 interface ExecutionContext {

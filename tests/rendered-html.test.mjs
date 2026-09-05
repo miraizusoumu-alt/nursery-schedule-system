@@ -270,6 +270,47 @@ test("adds the protected database-backed parent schedule screen without changing
   assert.match(css, /@media \(max-width:\s*719px\)/);
 });
 
+test("adds protected staff login and mobile preference submission without duplicating scheduling rules", async () => {
+  const [loginPage, preferencePage, client, authClient, service, http, gateway, worker, css] = await Promise.all([
+    readFile(new URL("../app/auth/staff/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/staff/preferences/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/staff/StaffPreferenceClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/auth/AuthClient.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/server/staff-preference/service.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/staff-preference-http.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../server/gateway.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(loginPage, /職員ログイン/);
+  assert.match(loginPage, /LoginForm scope="staff"/);
+  assert.match(preferencePage, /StaffPreferenceClient/);
+  assert.match(client, /希望なし.*希望休.*希望勤務時間/s);
+  assert.match(client, /下書きを保存/);
+  assert.match(client, /内容を確認/);
+  assert.match(client, /提出済みです。変更が必要な場合は管理者へご連絡ください/);
+  assert.match(client, /管理者による希望内容の変更がありました/);
+  assert.match(client, /入力途中の希望は破棄されます/);
+  assert.match(client, /最新内容を読み込み直す/);
+  assert.match(client, /expectedOfficialPreferencesHash/);
+  assert.match(client, /Array\.from\(\{ length:/);
+  assert.match(authClient, /"family" \| "admin" \| "staff"/);
+  assert.match(service, /validateScheduleTimeRange/);
+  assert.match(service, /BEGIN IMMEDIATE/);
+  assert.match(service, /base_preferences_hash/);
+  assert.match(service, /officialPreferencesHash/);
+  assert.match(service, /resetOwnDraft/);
+  assert.match(service, /staff_schedule_preferences/);
+  assert.match(http, /requireSession\(request, authService, \{ type: "staff" \}\)/);
+  assert.match(http, /assertCsrf/);
+  assert.match(http, /\/api\/staff\/preferences\/reset/);
+  assert.match(gateway, /handleStaffPreferenceApiRequest/);
+  assert.match(worker, /\/staff\/preferences/);
+  assert.match(css, /\.staff-preference-days/);
+  assert.match(css, /@media \(max-width:\s*719px\)/);
+});
+
 test("connects protected administrator schedule operations without changing the prototype", async () => {
   const [page, adminPage, accountsPage, adminClient, adminNavigation, childManagement, staffSchedule, headcount, adminHttp, staffScheduleHttp, gateway, authHttp, worker, familyService, css] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

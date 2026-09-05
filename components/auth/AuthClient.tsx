@@ -4,9 +4,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, ApiError } from "@/lib/client/api";
 
 type Actor = {
-  type: "family" | "administrator";
+  type: "family" | "administrator" | "staff";
   id: string;
   familyId: string | null;
+  staffId: string | null;
   role: "normal" | "master" | null;
   displayName: string;
   loginId: string;
@@ -42,6 +43,8 @@ export type Credential = {
   temporaryPassword: string;
   familyId?: string;
   administratorId?: string;
+  accountId?: string;
+  staffId?: string;
   role?: string;
   childNames?: string[];
   startDate?: string | null;
@@ -179,7 +182,7 @@ function PasswordField({
   );
 }
 
-export function LoginForm({ scope }: { scope: "family" | "admin" }) {
+export function LoginForm({ scope }: { scope: "family" | "admin" | "staff" }) {
   const loginIdInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
